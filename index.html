@@ -1,0 +1,1839 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Zu's Restaurant Splitter</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f7f5f0; min-height: 100vh; color: #1a1208; }
+.header { background: #1a1208; color: #f7f5f0; padding: 16px 20px; display: flex; align-items: center; justify-content: space-between; }
+.header-title { font-size: 17px; font-weight: 700; }
+.header-sub { font-size: 12px; opacity: 0.5; margin-top: 2px; }
+.role-pill { font-size: 11px; padding: 4px 12px; border-radius: 20px; font-weight: 600; }
+.role-host { background: #c8963e; color: #fff; }
+.role-eater { background: #5a7a5e; color: #fff; }
+.container { max-width: 580px; margin: 0 auto; padding: 20px 16px; }
+.card { background: #fff; border-radius: 14px; padding: 20px; margin-bottom: 14px; border: 1px solid #e8e0d0; }
+.card-title { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; color: #8a7e6e; margin-bottom: 14px; }
+label { display: block; font-size: 13px; color: #6b5f4f; margin-bottom: 5px; font-weight: 500; }
+input[type=text], input[type=number], input[type=date] { width: 100%; padding: 11px 13px; border: 1.5px solid #e0d8c8; border-radius: 9px; font-size: 15px; background: #faf8f4; color: #1a1208; outline: none; }
+input:focus { border-color: #c8963e; background: #fff; }
+input[type=file] { width: 100%; padding: 10px; border: 1.5px solid #e0d8c8; border-radius: 9px; background: #faf8f4; font-size: 14px; cursor: pointer; }
+.field-group { margin-bottom: 14px; }
+.btn-primary { width: 100%; padding: 14px; background: #1a1208; color: #f7f5f0; border: none; border-radius: 11px; font-size: 15px; font-weight: 600; cursor: pointer; }
+.btn-primary:disabled { opacity: 0.4; cursor: not-allowed; }
+.btn-gold { width: 100%; padding: 14px; background: #c8963e; color: #fff; border: none; border-radius: 11px; font-size: 15px; font-weight: 600; cursor: pointer; }
+.btn-green { width: 100%; padding: 14px; background: #5a7a5e; color: #fff; border: none; border-radius: 11px; font-size: 15px; font-weight: 600; cursor: pointer; margin-top: 10px; }
+.btn-outline { width: 100%; padding: 11px; border: 1.5px solid #e0d8c8; border-radius: 10px; background: transparent; color: #6b5f4f; font-size: 14px; font-weight: 500; cursor: pointer; }
+.btn-danger { width: 100%; padding: 11px; border: 1.5px solid #f0d0c8; border-radius: 10px; background: transparent; color: #c0522a; font-size: 14px; cursor: pointer; margin-top: 10px; }
+.item-row { display: grid; grid-template-columns: 1fr 100px 38px; gap: 8px; margin-bottom: 8px; align-items: center; }
+.remove-btn { height: 42px; border: 1.5px solid #e0d8c8; border-radius: 9px; background: #faf8f4; color: #c0522a; font-size: 20px; cursor: pointer; }
+.add-item-btn { width: 100%; padding: 9px; border: 1.5px dashed #c8963e; border-radius: 9px; background: transparent; color: #c8963e; font-size: 14px; font-weight: 500; cursor: pointer; margin-top: 4px; }
+.dinner-item { display: flex; align-items: center; justify-content: space-between; padding: 14px 0; border-bottom: 1px solid #f0ebe0; cursor: pointer; }
+.dinner-item:last-child { border-bottom: none; }
+.dinner-name { font-size: 15px; font-weight: 600; margin-bottom: 3px; }
+.dinner-meta { font-size: 12px; color: #8a7e6e; }
+.new-dinner-btn { width: 100%; padding: 13px; background: #1a1208; color: #f7f5f0; border: none; border-radius: 11px; font-size: 15px; font-weight: 600; cursor: pointer; margin-bottom: 14px; }
+.tabs { display: flex; gap: 8px; margin-bottom: 16px; }
+.tab { flex: 1; padding: 10px; border: 1.5px solid #e0d8c8; border-radius: 10px; background: #fff; font-size: 14px; font-weight: 500; cursor: pointer; color: #8a7e6e; text-align: center; }
+.tab.active { background: #1a1208; color: #f7f5f0; border-color: #1a1208; }
+.share-box { background: #f7f5f0; border: 1.5px dashed #c8963e; border-radius: 11px; padding: 14px; text-align: center; margin-bottom: 10px; }
+.share-url { font-size: 12px; color: #c8963e; font-weight: 600; word-break: break-all; margin-bottom: 10px; }
+.copy-btn { padding: 8px 18px; background: #c8963e; color: #fff; border: none; border-radius: 8px; font-size: 13px; font-weight: 600; cursor: pointer; }
+.order-row { display: flex; align-items: flex-start; justify-content: space-between; padding: 12px 0; border-bottom: 1px solid #f0ebe0; }
+.order-row:last-child { border-bottom: none; }
+.order-name { font-size: 15px; font-weight: 600; margin-bottom: 3px; }
+.order-items { font-size: 12px; color: #8a7e6e; }
+.order-total { font-size: 15px; font-weight: 700; color: #c8963e; white-space: nowrap; margin-left: 10px; }
+.live-dot { display: inline-block; width: 7px; height: 7px; background: #5a7a5e; border-radius: 50%; margin-right: 6px; animation: pulse 1.5s infinite; }
+@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.3} }
+.status-bar { display: flex; align-items: center; font-size: 12px; color: #5a7a5e; margin-bottom: 14px; }
+.empty-state { text-align: center; padding: 32px 0; color: #8a7e6e; font-size: 14px; }
+.tip-presets { display: flex; gap: 8px; margin-bottom: 10px; }
+.tip-preset { flex: 1; padding: 8px; border: 1.5px solid #e0d8c8; border-radius: 8px; background: #faf8f4; font-size: 13px; font-weight: 500; cursor: pointer; color: #6b5f4f; text-align: center; }
+.tip-preset.active { border-color: #c8963e; background: #fdf6eb; color: #c8963e; }
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th { text-align: left; padding: 9px 10px; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.7px; color: #8a7e6e; border-bottom: 1.5px solid #e8e0d0; }
+td { padding: 11px 10px; border-bottom: 1px solid #f0ebe0; }
+.totals-row td { background: #f7f5f0; font-weight: 700; border-top: 2px solid #e0d8c8; border-bottom: none; }
+.big-amount { font-size: 48px; font-weight: 800; color: #1a1208; letter-spacing: -2px; margin: 12px 0; }
+.back-btn { display: flex; align-items: center; gap: 6px; font-size: 14px; color: #8a7e6e; cursor: pointer; margin-bottom: 16px; background: none; border: none; padding: 0; }
+.pay-opt { padding: 10px; border: 1.5px solid #e0d8c8; border-radius: 9px; background: #faf8f4; font-size: 13px; font-weight: 500; cursor: pointer; color: #6b5f4f; text-align: center; }
+.pay-opt.active { border-color: #c8963e; background: #fdf6eb; color: #c8963e; font-weight: 600; }
+.scan-status { font-size: 13px; min-height: 20px; margin-top: 6px; }
+.disabled-section { opacity: 0.4; pointer-events: none; }
+.future-badge { display: inline-block; font-size: 10px; font-weight: 700; background: #e0d8c8; color: #8a7e6e; padding: 2px 8px; border-radius: 20px; margin-left: 6px; vertical-align: middle; }
+/* Payment checklist */
+.pay-check-row { display: flex; align-items: center; justify-content: space-between; padding: 12px 0; border-bottom: 1px solid #f0ebe0; }
+.pay-check-row:last-child { border-bottom: none; }
+.check-btn { width: 28px; height: 28px; border-radius: 50%; border: 2px solid #e0d8c8; background: #fff; cursor: pointer; font-size: 14px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+.check-btn.paid { background: #5a7a5e; border-color: #5a7a5e; color: #fff; }
+</style>
+</head>
+<body>
+<div class="header">
+  <div>
+    <div class="header-title">Zu&#39;s Restaurant Splitter</div>
+    <div class="header-sub" id="header-sub">No more Venmo math</div>
+  </div>
+  <div class="role-pill" id="role-pill" style="display:none"></div>
+</div>
+<div class="container" id="app"></div>
+
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
+<script>
+firebase.initializeApp({
+  apiKey: "AIzaSyDOlFfT72KhDvKzCXygbxGZStQDS-WTWrI",
+  authDomain: "bill-splitter-f035e.firebaseapp.com",
+  projectId: "bill-splitter-f035e",
+  storageBucket: "bill-splitter-f035e.firebasestorage.app",
+  messagingSenderId: "1050479902472",
+  appId: "1:1050479902472:web:8c555ca2b62c0532a136bd"
+});
+var db = firebase.firestore();
+var auth = firebase.auth();
+var params = new URLSearchParams(window.location.search);
+var mode = params.get('mode');
+var sessionId = params.get('session') || null;
+var itemCount = 0;
+var orders = [];
+var activeTab = 'orders';
+var selectedTip = 20;
+var selectedPayMethod = 'Zelle';
+var unsubscribe = null;
+var unsubscribeDashboard = null;
+var lastResults = null;
+var paidStatus = {};
+var tipAlreadyIncluded = false;
+var totalsSent = false;
+var pendingCalcData = null;
+var lastSplitInputs = null;
+var editItemCount = 0;
+var currentUser = null;
+var menuItems = []; // receipt items scanned by host, expanded by qty
+var receiptData = { subtotal: 0, tax: 0, tip: 0, fees: [], confirmed: false };
+
+// ── ROUTING ──────────────────────────────────────────────
+// Eaters don't need auth - route them directly
+if (mode === 'eater' && sessionId) {
+  showEaterView();
+} else {
+  // Host flows require auth
+  document.getElementById('app').innerHTML =
+    '<div style="text-align:center;padding:60px 20px;">' +
+    '<div style="font-size:32px;margin-bottom:12px;">🍽️</div>' +
+    '<div style="font-size:18px;font-weight:700;margin-bottom:8px;">Zu&#39;s Restaurant Splitter</div>' +
+    '<p style="color:#8a7e6e;font-size:14px;margin-bottom:24px;">Sign in to manage your dinners</p>' +
+    '<button onclick="signInWithGoogle()" style="padding:14px 28px;background:#1a1208;color:#f7f5f0;border:none;border-radius:11px;font-size:15px;font-weight:600;cursor:pointer;display:inline-flex;align-items:center;gap:10px;">' +
+    '<svg width="18" height="18" viewBox="0 0 24 24"><path fill="#fff" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/><path fill="#fff" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#fff" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l3.66-2.84z"/><path fill="#fff" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/></svg>' +
+    'Sign in with Google</button>' +
+    '</div>';
+
+  auth.onAuthStateChanged(function(user) {
+    if (user) {
+      currentUser = user;
+      // Update header with user info
+      document.getElementById('header-sub').textContent = user.displayName || user.email;
+      if (mode === 'host' && sessionId) showHostDinner();
+      else showHostDashboard();
+    }
+  });
+}
+
+function signInWithGoogle() {
+  var provider = new firebase.auth.GoogleAuthProvider();
+  auth.signInWithPopup(provider).catch(function(e) {
+    alert('Sign in failed: ' + e.message);
+  });
+}
+
+function signOut() {
+  auth.signOut().then(function() {
+    currentUser = null;
+    window.location.href = window.location.pathname;
+  });
+}
+
+// ── HOST DASHBOARD ───────────────────────────────────────
+function showHostDashboard() {
+  if (unsubscribe) { unsubscribe(); unsubscribe = null; }
+  setRole('host');
+  document.getElementById('header-sub').textContent = 'No more Venmo math';
+  document.getElementById('app').innerHTML = '<div class="empty-state">Loading...</div>';
+  unsubscribeDashboard = db.collection('dinners').orderBy('createdAt','desc').onSnapshot(function(snap) {
+    var dinners = snap.docs.map(function(d){ return Object.assign({id:d.id}, d.data()); });
+    var listHtml = dinners.length === 0
+      ? '<div class="empty-state">No dinners yet. Create your first one.</div>'
+      : dinners.map(function(d){
+          return '<div class="dinner-item">' +
+            '<div style="flex:1;cursor:pointer" onclick="goToHostDinner(\'' + d.id + '\')">' +
+            '<div class="dinner-name">' + d.restaurant + '</div>' +
+            '<div class="dinner-meta">' + formatDate(d.date) + ' · ' + (d.orderCount||0) + ' orders</div></div>' +
+            '<div style="display:flex;align-items:center;gap:12px;">' +
+            '<button onclick="deleteDinner(\'' + d.id + '\')" style="background:none;border:none;cursor:pointer;padding:8px;display:flex;align-items:center;justify-content:center;" title="Delete">' +
+            '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#c0522a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3,6 5,6 21,6"></polyline><path d="M19,6l-1,14a2,2,0,0,1-2,2H8a2,2,0,0,1-2-2L5,6"></path><path d="M10,11v6"></path><path d="M14,11v6"></path><path d="M9,6V4a1,1,0,0,1,1-1h4a1,1,0,0,1,1,1V6"></path></svg>' +
+            '</button>' +
+            '<div style="font-size:20px;color:#c8963e;cursor:pointer" onclick="goToHostDinner(\'' + d.id + '\')" >›</div>' +
+            '</div></div>';
+        }).join('');
+    var userName = currentUser ? currentUser.displayName || currentUser.email : '';
+    document.getElementById('app').innerHTML =
+      '<div style="display:flex;gap:8px;margin-bottom:14px;">' +
+        '<button class="new-dinner-btn" style="flex:1;margin-bottom:0;" onclick="showNewDinnerForm()">+ New Dinner</button>' +
+        '<button onclick="signOut()" style="padding:13px 16px;border:1.5px solid #e0d8c8;border-radius:11px;background:#fff;font-size:13px;color:#8a7e6e;cursor:pointer;white-space:nowrap;">Sign Out</button>' +
+      '</div>' +
+      '<div class="card"><div class="card-title">Your Dinners</div>' + listHtml + '</div>';
+  });
+}
+
+function showNewDinnerForm() {
+  document.getElementById('app').innerHTML =
+    '<button class="back-btn" onclick="showHostDashboard()">‹ Back</button>' +
+    '<div class="card">' +
+      '<div class="card-title">New Dinner</div>' +
+      '<div class="field-group"><label>Your Name (Host)</label>' +
+      '<input type="text" id="host-name-create" placeholder="e.g. Zu" /></div>' +
+      '<div class="field-group"><label>Restaurant Name</label>' +
+      '<input type="text" id="rest-name" placeholder="e.g. Yamashiro" /></div>' +
+      '<div class="field-group"><label>Date</label>' +
+      '<input type="date" id="rest-date" value="' + new Date().toISOString().slice(0,10) + '" /></div>' +
+      '<div class="field-group"><label>How should people pay you?</label>' +
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px;">' +
+        '<button type="button" class="pay-opt active" id="pay-Zelle" onclick="selectPay(\'Zelle\')">Zelle</button>' +
+        '<button type="button" class="pay-opt" id="pay-Venmo" onclick="selectPay(\'Venmo\')">Venmo</button>' +
+        '<button type="button" class="pay-opt" id="pay-CashApp" onclick="selectPay(\'Cash App\')">Cash App</button>' +
+        '<button type="button" class="pay-opt" id="pay-Cash" onclick="selectPay(\'Cash\')">Cash</button>' +
+      '</div>' +
+      '<input type="text" id="pay-handle" placeholder="Your username / handle (optional)" /></div>' +
+      '<button class="btn-primary" onclick="createDinner()">Create Dinner →</button>' +
+    '</div>';
+}
+
+function selectPay(method) {
+  selectedPayMethod = method;
+  ['Zelle','Venmo','CashApp','Cash'].forEach(function(m) {
+    var el = document.getElementById('pay-' + m);
+    if (el) el.className = 'pay-opt' + (m.replace(' ','') === method.replace(' ','') ? ' active' : '');
+  });
+}
+
+function createDinner() {
+  var hostName = document.getElementById('host-name-create').value.trim();
+  var name = document.getElementById('rest-name').value.trim();
+  var date = document.getElementById('rest-date').value;
+  var handle = document.getElementById('pay-handle').value.trim();
+  if (!hostName) { alert('Enter your name'); return; }
+  if (!name) { alert('Enter a restaurant name'); return; }
+  db.collection('dinners').add({
+    restaurant: name, date: date,
+    hostName: hostName,
+    payMethod: selectedPayMethod, payHandle: handle,
+    createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+    orderCount: 0
+  }).then(function(ref) { goToHostDinner(ref.id); });
+}
+
+function deleteDinner(id) {
+  if (!confirm('Delete this dinner? This cannot be undone.')) return;
+  db.collection('dinners').doc(id).collection('orders').get().then(function(snap) {
+    var batch = db.batch();
+    snap.docs.forEach(function(d){ batch.delete(d.ref); });
+    batch.delete(db.collection('dinners').doc(id));
+    return batch.commit();
+  });
+}
+
+function goToHostDinner(id) {
+  if (unsubscribeDashboard) { unsubscribeDashboard(); unsubscribeDashboard = null; }
+  // Reset receipt state for new dinner
+  menuItems = [];
+  receiptData = { subtotal: 0, tax: 0, tip: 0, fees: [], confirmed: false };
+  lastResults = null;
+  paidStatus = {};
+  orders = [];
+  window.history.pushState({}, '', '?mode=host&session=' + id);
+  sessionId = id; mode = 'host';
+  showHostDinner();
+}
+
+// ── HOST DINNER VIEW ─────────────────────────────────────
+function showHostDinner() {
+  setRole('host');
+  if (unsubscribe) { unsubscribe(); unsubscribe = null; }
+  db.collection('dinners').doc(sessionId).get().then(function(doc) {
+    if (!doc.exists) { showHostDashboard(); return; }
+    var dinner = doc.data();
+    document.getElementById('header-sub').textContent = dinner.restaurant + ' · ' + formatDate(dinner.date);
+    window._dinnerHostName = dinner.hostName || '';
+    if (dinner.receiptData) receiptData = dinner.receiptData;
+    if (dinner.menuItems) menuItems = dinner.menuItems;
+    var eaterUrl = window.location.origin + window.location.pathname + '?mode=eater&session=' + sessionId;
+    var html = '';
+    html += '<button class="back-btn" onclick="showHostDashboard()">‹ All Dinners</button>';
+    html += '<div class="card" style="border-left:4px solid #c8963e;">';
+    html += '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">';
+    html += '<div><div style="font-size:18px;font-weight:700;">' + dinner.restaurant + '</div>';
+    html += '<div style="font-size:13px;color:#8a7e6e;">' + formatDate(dinner.date) + ' · ' + (dinner.payMethod||'Zelle') + (dinner.payHandle?' @'+dinner.payHandle:'') + '</div></div>';
+    html += '<div style="display:flex;align-items:center;gap:8px;">';
+    html += '<div style="font-size:11px;font-weight:700;background:#1a1208;color:#fff;padding:5px 12px;border-radius:20px;">HOST</div>';
+    html += '</div>';
+    html += '</div>';
+    html += '</div>';
+    html += '<div class="tabs">';
+    html += '<button class="tab active" id="tab-scan" onclick="switchTab(&quot;scan&quot;)">1. Scan Receipt</button>';
+    html += '<button class="tab" id="tab-orders" onclick="switchTab(&quot;orders&quot;)">2. Blast & Claim</button>';
+    html += '<button class="tab" id="tab-pay" onclick="switchTab(&quot;pay&quot;)">3. Calculate & Pay</button>';
+    html += '</div>';
+    html += '<div id="tab-content"></div>';
+    document.getElementById('app').innerHTML = html;
+    listenOrders();
+    renderScanTab();
+  });
+}
+
+function copyEaterLink() {
+  var url = document.getElementById('eater-url').textContent;
+  navigator.clipboard.writeText(url).then(function() {
+    var btn = document.querySelector('.copy-btn');
+    btn.textContent = 'Copied!';
+    setTimeout(function(){ btn.textContent = 'Copy Link'; }, 2000);
+  });
+}
+
+function listenOrders() {
+  unsubscribe = db.collection('dinners').doc(sessionId).collection('orders')
+    .onSnapshot(function(snap) {
+      orders = snap.docs.map(function(d){ return d.data(); });
+      db.collection('dinners').doc(sessionId).update({ orderCount: orders.length });
+      var tab = activeTab;
+      if (tab === 'orders') {
+        // Only re-render orders list, not the host form
+        if (document.getElementById('orders-list-container')) {
+          renderOrdersList();
+        } else {
+          renderOrdersTab();
+        }
+      } else if (tab === 'paid') renderPaidTab();
+    });
+}
+
+function switchTab(tab) {
+  activeTab = tab;
+  ['scan','orders','pay'].forEach(function(t) {
+    var el = document.getElementById('tab-' + t);
+    if (el) el.className = 'tab' + (t === tab ? ' active' : '');
+  });
+  if (tab === 'scan') renderScanTab();
+  else if (tab === 'orders') renderOrdersTab();
+  else if (tab === 'pay') renderPayTab();
+}
+
+function saveSplitInputs() {}
+
+function renderOrdersTab() {
+  var el = document.getElementById('tab-content');
+  if (!el) return;
+  var html = '';
+
+  // Eater link — always at top, always visible
+  var eaterUrl = window.location.origin + window.location.pathname + '?mode=eater&session=' + sessionId;
+  html += '<div class="card">';
+  html += '<div class="card-title">Eater Link</div>';
+  html += '<div class="share-box" style="margin-bottom:8px;">';
+  html += '<div class="share-url" id="eater-url">' + eaterUrl + '</div>';
+  html += '<button class="copy-btn" onclick="copyEaterLink()">Copy Link</button>';
+  html += '</div>';
+  if (receiptData.confirmed && menuItems.length > 0) {
+    html += '<button class="btn-gold" onclick="sendMenuToEaters()">Send Menu to Eaters &#8594;</button>';
+    html += '<div id="send-menu-status" style="margin-top:8px;font-size:12px;color:#8a7e6e;text-align:center;"></div>';
+  } else {
+    html += '<p style="font-size:12px;color:#8a7e6e;margin-top:8px;margin-bottom:0;">Complete Tab 1 (scan & confirm receipt) to send items to eaters.</p>';
+  }
+  html += '</div>';
+
+  // Host meal — tap to claim from menu
+  if (menuItems.length > 0) {
+    html += '<div class="card">';
+    html += '<div class="card-title">Your Meal (Host)</div>';
+    html += '<p style="font-size:12px;color:#8a7e6e;margin-bottom:10px;">Tap the items you ordered.</p>';
+    html += '<div id="host-claim-list">';
+    menuItems.forEach(function(item, idx) {
+      var isMe = item.claimedBy && item.claimedBy === window._dinnerHostName;
+      var claimedByOther = item.claimedBy && !isMe;
+      html += '<div class="host-claim-row" id="hclaim-'+idx+'" data-idx="'+idx+'" data-name="'+item.name.replace(/"/g,'&quot;')+'" data-price="'+item.price+'" onclick="toggleHostClaim(this)" ';
+      html += 'style="display:flex;align-items:center;justify-content:space-between;padding:10px 12px;margin-bottom:6px;border-radius:10px;border:1.5px solid '+(isMe?'#c8963e':claimedByOther?'#e0d8c8':'#e0d8c8')+';background:'+(isMe?'#fdf6eb':claimedByOther?'#f7f5f0':'#faf8f4')+';cursor:pointer;">';
+      html += '<div style="display:flex;align-items:center;gap:10px;">';
+      html += '<div style="width:22px;height:22px;border-radius:50%;border:2px solid '+(isMe?'#c8963e':'#e0d8c8')+';background:'+(isMe?'#c8963e':'#fff')+';display:flex;align-items:center;justify-content:center;font-size:12px;color:#fff;flex-shrink:0;">'+(isMe?'&#10003;':'')+'</div>';
+      html += '<div>';
+      html += '<div style="font-size:14px;font-weight:500;color:'+(claimedByOther?'#8a7e6e':'#1a1208')+'">' + item.name + '</div>';
+      if (claimedByOther) html += '<div style="font-size:11px;color:#8a7e6e;">Claimed by ' + item.claimedBy + '</div>';
+      html += '</div></div>';
+      html += '<div style="font-size:14px;font-weight:700;color:#c8963e;">$' + parseFloat(item.price).toFixed(2) + '</div>';
+      html += '</div>';
+    });
+    html += '</div>';
+    html += '<div style="display:flex;justify-content:space-between;align-items:center;margin-top:12px;padding-top:10px;border-top:1px solid #f0ebe0;">';
+    html += '<span style="font-size:13px;color:#8a7e6e;">Your total: <span id="host-claim-total" style="font-weight:700;color:#1a1208;">$0.00</span></span>';
+    html += '<button class="btn-primary" style="width:auto;padding:10px 18px;" onclick="saveHostClaims()">Save My Items</button>';
+    html += '</div>';
+    html += '</div>';
+  } else {
+    // No menu scanned yet — manual entry
+    html += '<div class="card" id="add-order-card">';
+    html += '<div class="card-title">Add Orders</div>';
+    html += '<div id="order-persons-list"></div>';
+    html += '<button class="add-item-btn" style="margin-bottom:10px;" onclick="addPersonEntry()">+ Add Another Person</button>';
+    html += '<button class="btn-primary" onclick="saveAllOrders()">Save All Orders</button>';
+    html += '<div id="add-order-status" style="margin-top:8px;font-size:12px;color:#8a7e6e;text-align:center;min-height:18px;"></div>';
+    html += '</div>';
+  }
+
+  // Live orders feed
+  html += '<div id="orders-list-container"></div>';
+  el.innerHTML = html;
+
+  updateHostClaimTotal();
+
+  if (!menuItems.length) {
+    addPersonEntry();
+    if (window._dinnerHostName) {
+      var inp = document.querySelector('#order-persons-list .person-name');
+      if (inp) inp.value = window._dinnerHostName;
+      var chk = document.querySelector('#order-persons-list .is-host-check');
+      if (chk) chk.checked = true;
+    }
+  }
+
+  renderOrdersList();
+}
+
+function toggleHostClaim(el) {
+  var isSelected = el.style.background === 'rgb(253, 246, 235)' || el.style.background === '#fdf6eb';
+  var circle = el.querySelector('div > div');
+  if (isSelected) {
+    el.style.background = '#faf8f4';
+    el.style.borderColor = '#e0d8c8';
+    if (circle) { circle.style.background = '#fff'; circle.style.borderColor = '#e0d8c8'; circle.textContent = ''; }
+  } else {
+    el.style.background = '#fdf6eb';
+    el.style.borderColor = '#c8963e';
+    if (circle) { circle.style.background = '#c8963e'; circle.style.borderColor = '#c8963e'; circle.textContent = '✓'; }
+  }
+  updateHostClaimTotal();
+}
+
+function updateHostClaimTotal() {
+  var total = 0;
+  document.querySelectorAll('.host-claim-row').forEach(function(el) {
+    if (el.style.background === 'rgb(253, 246, 235)' || el.style.background === '#fdf6eb') {
+      total += parseFloat(el.dataset.price) || 0;
+    }
+  });
+  var el = document.getElementById('host-claim-total');
+  if (el) el.textContent = '$' + total.toFixed(2);
+}
+
+function saveHostClaims() {
+  var name = window._dinnerHostName;
+  if (!name) { alert('Set your host name when creating the dinner'); return; }
+  var items = []; var subtotal = 0;
+  document.querySelectorAll('.host-claim-row').forEach(function(el) {
+    if (el.style.background === 'rgb(253, 246, 235)' || el.style.background === '#fdf6eb') {
+      items.push({ name: el.dataset.name, price: parseFloat(el.dataset.price) });
+      subtotal += parseFloat(el.dataset.price) || 0;
+    }
+  });
+  if (items.length === 0) { alert('Select at least one item'); return; }
+
+  // Update claimedBy in menuItems
+  var updatedMenu = menuItems.map(function(item, idx) {
+    var el = document.getElementById('hclaim-' + idx);
+    if (el && (el.style.background === 'rgb(253, 246, 235)' || el.style.background === '#fdf6eb')) {
+      return Object.assign({}, item, { claimedBy: name });
+    }
+    return item;
+  });
+
+  var batch = db.batch();
+  batch.set(db.collection('dinners').doc(sessionId).collection('orders').doc(name), {
+    name: name, items: items,
+    subtotal: Math.round(subtotal * 100) / 100,
+    isHost: true,
+    submittedAt: firebase.firestore.FieldValue.serverTimestamp()
+  });
+  batch.update(db.collection('dinners').doc(sessionId), { menuItems: updatedMenu });
+
+  batch.commit().then(function() {
+    menuItems = updatedMenu;
+    alert('Your items saved!');
+    renderOrdersTab();
+  }).catch(function(e) { alert('Error: ' + e.message); });
+}
+
+function renderOrdersList() {
+  var el = document.getElementById('orders-list-container');
+  if (!el) return;
+
+  if (orders.length === 0) {
+    el.innerHTML = '<div class="card"><div class="status-bar"><span class="live-dot"></span>Waiting for orders...</div><div class="empty-state">Nobody has submitted yet.<br>Share the eater link above.</div></div>';
+    return;
+  }
+
+  var foodTotal = orders.reduce(function(s,o){ return s+(o.subtotal||0); },0);
+  // Check for unclaimed menu items
+  db.collection('dinners').doc(sessionId).get().then(function(doc) {
+    if (!doc.exists) return;
+    var dinner = doc.data();
+    if (dinner.menuItems && dinner.menuItems.length > 0) {
+      var unclaimed = dinner.menuItems.filter(function(i){ return !i.claimedBy; });
+      var el2 = document.getElementById('orders-list-container');
+      var warn = el2 ? el2.querySelector('.unclaimed-warning') : null;
+      if (unclaimed.length > 0) {
+        var warnHtml = '<div class="unclaimed-warning" style="padding:10px 14px;background:#faeeda;border-radius:10px;margin-bottom:10px;font-size:13px;color:#854f0b;">' +
+          '⚠ ' + unclaimed.length + ' item' + (unclaimed.length>1?'s':'') + ' unclaimed: ' +
+          unclaimed.map(function(i){ return i.name + ' ($' + parseFloat(i.price).toFixed(2) + ')'; }).join(', ') +
+          '</div>';
+        if (el2 && !warn) el2.insertAdjacentHTML('afterbegin', warnHtml);
+      }
+    }
+  });
+  var rows = orders.map(function(o){
+    var badge = o.finalOwes
+      ? '<span style="font-size:11px;background:#eaf3de;color:#3b6d11;padding:2px 7px;border-radius:10px;margin-left:6px;font-weight:600;">Notified $'+o.finalOwes.toFixed(2)+'</span>'
+      : '';
+    var hostBadge = o.isHost ? '<span style="font-size:10px;background:#c8963e;color:#fff;padding:2px 6px;border-radius:10px;margin-left:4px;">HOST</span>' : '';
+    var safeName = o.name.replace(/'/g,"&#39;");
+    var isHostFlag = o.isHost ? 'true' : 'false';
+    return '<div class="order-row"><div style="flex:1;">' +
+      '<div class="order-name">' + o.name + hostBadge + badge + '</div>' +
+      '<div class="order-items">' + o.items.map(function(i){ return i.name+' $'+parseFloat(i.price).toFixed(2); }).join(' · ') + '</div>' +
+      '</div>' +
+      '<div style="display:flex;align-items:center;gap:10px;">' +
+        '<div class="order-total">$'+parseFloat(o.subtotal).toFixed(2)+'</div>' +
+        '<button onclick="editOrderInline(\''+safeName+'\','+isHostFlag+')" title="Edit order" style="background:none;border:1.5px solid #e0d8c8;border-radius:8px;padding:5px 9px;cursor:pointer;font-size:14px;color:#6b5f4f;flex-shrink:0;">&#9998;</button>' +
+      '</div>' +
+      '</div>';
+  }).join('');
+
+  el.innerHTML =
+    '<div class="card"><div class="status-bar"><span class="live-dot"></span>'+orders.length+' order'+(orders.length!==1?'s':'')+' received</div>' +
+    rows +
+    '<div style="margin-top:14px;padding-top:14px;border-top:2px solid #e8e0d0;display:flex;justify-content:space-between;">' +
+    '<span style="font-size:12px;font-weight:700;color:#8a7e6e;text-transform:uppercase;">Food Total</span>' +
+    '<span style="font-size:18px;font-weight:700;">$'+foodTotal.toFixed(2)+'</span></div></div>' +
+    '<button class="btn-danger" onclick="clearOrders()">Clear All Orders</button>';
+}
+
+function clearOrders() {
+  if (!confirm('Clear all orders? Cannot be undone.')) return;
+  db.collection('dinners').doc(sessionId).collection('orders').get().then(function(snap) {
+    var batch = db.batch();
+    snap.docs.forEach(function(d){ batch.delete(d.ref); });
+    batch.commit();
+  });
+}
+
+function editOrderInline(name, isHost) {
+  var order = orders.find(function(o){ return o.name === name; });
+  if (!order) return;
+  var el = document.getElementById('orders-list-container');
+  if (!el) return;
+  editItemCount = 0;
+  var itemsHtml = order.items.map(function(item) {
+    editItemCount++;
+    return '<div class="item-row">' +
+      '<input type="text" class="edit-item-name" value="' + item.name.replace(/"/g,'&quot;') + '" />' +
+      '<input type="number" class="edit-item-price" value="' + item.price + '" step="0.01" min="0" />' +
+      '<button class="remove-btn" onclick="removeItem(this)">&#215;</button>' +
+      '</div>';
+  }).join('');
+  var hostBadgeHtml = isHost ? ' <span style="font-size:10px;background:#c8963e;color:#fff;padding:2px 6px;border-radius:10px;">HOST</span>' : '';
+  el.innerHTML =
+    '<div class="card" style="border-left:4px solid #c8963e;">' +
+      '<button class="back-btn" onclick="renderOrdersList()" style="margin-bottom:12px;">&#8249; Back to orders</button>' +
+      '<div class="card-title">Edit Order — ' + name + hostBadgeHtml + '</div>' +
+      '<div id="edit-items-list">' + itemsHtml + '</div>' +
+      '<button class="add-item-btn" onclick="addEditItem()">+ Add Item</button>' +
+      '<button class="btn-primary" style="margin-top:12px;" onclick="saveEditOrder(\'' + name.replace(/'/g,"&#39;") + '\',' + (isHost?'true':'false') + ')">Save Changes</button>' +
+      '<div id="edit-save-status" style="margin-top:8px;font-size:13px;color:#5a7a5e;text-align:center;"></div>' +
+    '</div>';
+}
+
+function addEditItem() {
+  editItemCount++;
+  var list = document.getElementById('edit-items-list');
+  if (!list) return;
+  var div = document.createElement('div');
+  div.className = 'item-row';
+  div.innerHTML = '<input type="text" class="edit-item-name" placeholder="Item name" />' +
+    '<input type="number" class="edit-item-price" placeholder="$0.00" step="0.01" min="0" />' +
+    '<button class="remove-btn" onclick="removeItem(this)">&#215;</button>';
+  list.appendChild(div);
+}
+
+function saveEditOrder(name, isHost) {
+  var rows = document.querySelectorAll('#edit-items-list .item-row');
+  var items = []; var subtotal = 0;
+  rows.forEach(function(row) {
+    var n = row.querySelector('.edit-item-name').value.trim();
+    var p = parseFloat(row.querySelector('.edit-item-price').value) || 0;
+    if (n || p) { items.push({ name: n||'Item', price: p }); subtotal += p; }
+  });
+  if (items.length === 0) { alert('Add at least one item'); return; }
+  var btn = document.querySelector('#orders-list-container .btn-primary');
+  if (btn) { btn.disabled = true; btn.textContent = 'Saving...'; }
+  var docData = { name: name, items: items, subtotal: Math.round(subtotal*100)/100, submittedAt: firebase.firestore.FieldValue.serverTimestamp() };
+  if (isHost) docData.isHost = true;
+  db.collection('dinners').doc(sessionId).collection('orders').doc(name).set(docData)
+    .then(function() {
+      var status = document.getElementById('edit-save-status');
+      if (status) status.textContent = '✓ Saved!';
+      setTimeout(function() { renderOrdersList(); }, 600);
+    })
+    .catch(function(e) {
+      if (btn) { btn.disabled = false; btn.textContent = 'Save Changes'; }
+      alert('Error: ' + e.message);
+    });
+}
+
+function renderScanTab() {
+  var el = document.getElementById('tab-content');
+  if (!el) return;
+  var html = '';
+
+  // Step 1: Upload
+  html += '<div class="card">';
+  html += '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">';
+  html += '<div class="card-title" style="margin-bottom:0;">Step 1 — Scan Receipt</div>';
+  html += '<span style="font-size:10px;font-weight:700;background:#5a7a5e;color:#fff;padding:3px 9px;border-radius:20px;">AI Powered</span>';
+  html += '</div>';
+  html += '<label style="font-size:13px;color:#6b5f4f;font-weight:500;margin-bottom:6px;display:block;">Take a photo or upload from gallery</label>';
+  html += '<input type="file" id="receipt-img" accept="image/*" onchange="scanReceipt()" />';
+  html += '<div id="scan-status" style="font-size:13px;min-height:20px;margin-top:10px;"></div>';
+  html += '</div>';
+
+  // Scanned items — shown between step 1 and step 2
+  if (menuItems.length > 0) {
+    html += '<div class="card">';
+    html += '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">';
+    html += '<div class="card-title" style="margin-bottom:0;">Scanned Items</div>';
+    html += '<button onclick="addMenuItem()" style="font-size:12px;color:#c8963e;background:none;border:1.5px solid #c8963e;border-radius:8px;padding:4px 10px;cursor:pointer;">+ Add Item</button>';
+    html += '</div>';
+    html += '<div id="menu-items-list">';
+    menuItems.forEach(function(item, idx) {
+      html += '<div style="display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid #f0ebe0;" id="mrow-'+idx+'">';
+      html += '<div style="flex:1;"><input type="text" class="menu-item-name" data-idx="'+idx+'" value="'+item.name.replace(/"/g,'&quot;')+'" style="width:100%;font-size:14px;border:none;background:transparent;color:#1a1208;font-weight:500;" onchange="updateMenuItemName(this)" /></div>';
+      html += '<input type="number" class="menu-item-price" data-idx="'+idx+'" value="'+item.price+'" step="0.01" min="0" style="width:70px;font-size:14px;font-weight:700;color:#c8963e;border:none;background:transparent;text-align:right;" onchange="updateMenuItemPrice(this)" />';
+      html += '<button data-idx="'+idx+'" onclick="removeMenuItemByIdx(parseInt(this.dataset.idx))" style="background:none;border:none;color:#c0522a;font-size:18px;cursor:pointer;padding:0 4px;flex-shrink:0;">×</button>';
+      html += '</div>';
+    });
+    html += '</div>';
+    var aiSum = menuItems.reduce(function(s,m){ return s+(m.price||0); },0);
+    html += '<div style="display:flex;justify-content:space-between;padding:10px 0 0;font-size:13px;font-weight:600;border-top:1.5px solid #e0d8c8;margin-top:4px;">';
+    html += '<span style="color:#8a7e6e;">AI Total</span><span>$'+aiSum.toFixed(2)+'</span>';
+    html += '</div>';
+    html += '</div>';
+  }
+
+  // Step 2: Totals
+  html += '<div class="card">';
+  html += '<div class="card-title">Step 2 — Enter Receipt Totals</div>';
+  html += '<div class="field-group"><label>Food Subtotal (before tax, tip & fees)</label>';
+  html += '<input type="number" id="r-subtotal" placeholder="$0.00" step="0.01" min="0" value="'+(receiptData.subtotal||'')+'" oninput="checkReceiptMatch()" /></div>';
+
+  // Match indicator
+  if (menuItems.length > 0 && receiptData.subtotal) {
+    var aiSum2 = menuItems.reduce(function(s,m){ return s+(m.price||0); },0);
+    var diff = Math.abs(receiptData.subtotal - aiSum2);
+    if (diff < 0.10) {
+      html += '<div style="margin:-8px 0 12px;padding:8px 12px;background:#eaf3de;border-radius:8px;font-size:12px;color:#3b6d11;font-weight:500;">✓ Matches AI total of $'+aiSum2.toFixed(2)+'</div>';
+    } else {
+      html += '<div style="margin:-8px 0 12px;padding:8px 12px;background:#faeeda;border-radius:8px;font-size:12px;color:#854f0b;">⚠ Mismatch — AI read $'+aiSum2.toFixed(2)+', you entered $'+receiptData.subtotal.toFixed(2)+'. Edit items above.</div>';
+    }
+  }
+
+  html += '<div class="field-group"><label>Tax ($)</label>';
+  html += '<input type="number" id="r-tax" placeholder="$0.00" step="0.01" min="0" value="'+(receiptData.tax||'')+'" /></div>';
+
+  // Tip
+  html += '<div class="field-group">';
+  html += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">';
+  html += '<label style="margin-bottom:0;">Tip</label>';
+  html += '<div style="display:flex;gap:6px;">';
+  html += '<button type="button" class="pay-opt'+(receiptData.tipIncluded?' active':'')+'" onclick="setTipMode(true)" style="padding:5px 10px;font-size:12px;">Already included</button>';
+  html += '<button type="button" class="pay-opt'+(receiptData.tipIncluded?'':' active')+'" onclick="setTipMode(false)" style="padding:5px 10px;font-size:12px;">Add tip</button>';
+  html += '</div></div>';
+  if (receiptData.tipIncluded) {
+    html += '<input type="number" id="r-tip" placeholder="Tip amount ($)" step="0.01" min="0" value="'+(receiptData.tip||'')+'" />';
+  } else {
+    var presets = [15,18,20,25].map(function(p){
+      return '<button class="tip-preset'+(receiptData.tipPct===p?' active':'')+'" onclick="setReceiptTip('+p+')">'+p+'%</button>';
+    }).join('');
+    html += '<div class="tip-presets" style="margin-bottom:8px;">'+presets+'</div>';
+    html += '<input type="number" id="r-tip-pct" placeholder="Custom %" step="1" min="0" max="100" value="'+(receiptData.tipPct||20)+'" oninput="updateTipFromPct()" />';
+  }
+  html += '</div>';
+
+  // Extra fees
+  html += '<div class="field-group">';
+  html += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">';
+  html += '<label style="margin-bottom:0;">Extra Fees</label>';
+  html += '<button onclick="addFee()" style="font-size:12px;color:#c8963e;background:none;border:1.5px solid #c8963e;border-radius:8px;padding:4px 10px;cursor:pointer;">+ Add Fee</button>';
+  html += '</div>';
+  html += '<div id="fees-list"></div>';
+  html += '</div>';
+
+  html += '<button class="btn-gold" onclick="confirmReceiptTotals()">Confirm Receipt →</button>';
+  if (receiptData.confirmed) {
+    html += '<div style="margin-top:10px;padding:10px;background:#eaf3de;border-radius:10px;font-size:13px;color:#3b6d11;font-weight:500;">✓ Confirmed — go to Blast & Claim tab</div>';
+  }
+  html += '</div>';
+
+  el.innerHTML = html;
+  receiptData.fees.forEach(function(fee, idx) { renderFeeRow(idx); });
+}
+
+function updateMenuItemName(el) {
+  var idx = parseInt(el.dataset.idx);
+  if (menuItems[idx]) menuItems[idx].name = el.value;
+}
+
+function updateMenuItemPrice(el) {
+  var idx = parseInt(el.dataset.idx);
+  if (menuItems[idx]) { menuItems[idx].price = parseFloat(el.value) || 0; checkReceiptMatch(); }
+}
+
+function removeMenuItemByIdx(idx) {
+  menuItems.splice(idx, 1);
+  renderScanTab();
+}
+
+function setTipMode(included) {
+  receiptData.tipIncluded = included;
+  renderScanTab();
+}
+
+function setReceiptTip(pct) {
+  receiptData.tipPct = pct;
+  renderScanTab();
+}
+
+function updateTipFromPct() {
+  var pctEl = document.getElementById('r-tip-pct');
+  if (pctEl) receiptData.tipPct = parseFloat(pctEl.value) || 0;
+}
+
+function addFee() {
+  receiptData.fees.push({ name: '', amount: 0, split: 'everyone', person: '' });
+  renderScanTab();
+}
+
+function renderFeeRow(idx) {
+  var list = document.getElementById('fees-list');
+  if (!list) return;
+  var fee = receiptData.fees[idx];
+  var eaterNames = orders.map(function(o){ return o.name; });
+  var personOpts = eaterNames.map(function(n){ return '<option value="'+n+'"'+(fee.person===n?' selected':'')+'>'+n+'</option>'; }).join('');
+
+  var div = document.createElement('div');
+  div.style.cssText = 'display:flex;gap:8px;align-items:center;margin-bottom:8px;';
+  div.innerHTML =
+    '<input type="text" placeholder="Fee name (e.g. Cake fee)" value="'+(fee.name||'')+'" data-idx="'+idx+'" data-field="name" style="flex:1;font-size:13px;" oninput="updateFeeEl(this)" />' +
+    '<input type="number" placeholder="$0" step="0.01" min="0" value="'+(fee.amount||'')+'" data-idx="'+idx+'" data-field="amount" style="width:70px;font-size:13px;" oninput="updateFeeEl(this)" />' +
+    '<select data-idx="'+idx+'" data-field="split" style="font-size:12px;padding:8px;border:1.5px solid #e0d8c8;border-radius:8px;background:#faf8f4;" onchange="updateFeeEl(this)">' +
+      '<option value="everyone"'+(fee.split==='everyone'?' selected':'')+'>Split evenly</option>' +
+      '<option value="person"'+(fee.split==='person'?' selected':'')+'>Assign to...</option>' +
+    '</select>' +
+    (fee.split === 'person' ? '<select data-idx="'+idx+'" data-field="person" style="font-size:12px;padding:8px;border:1.5px solid #e0d8c8;border-radius:8px;background:#faf8f4;" onchange="updateFeeEl(this)"><option value="">Pick person</option>'+personOpts+'</select>' : '') +
+    '<button data-idx="'+idx+'" onclick="removeFee(this.dataset.idx)" style="background:none;border:none;color:#c0522a;font-size:18px;cursor:pointer;">×</button>';
+  list.appendChild(div);
+}
+
+function updateFeeEl(el) {
+  var idx = parseInt(el.dataset.idx);
+  var field = el.dataset.field;
+  var value = el.value;
+  if (!receiptData.fees[idx]) return;
+  receiptData.fees[idx][field] = field === 'amount' ? (parseFloat(value)||0) : value;
+  if (field === 'split') renderScanTab();
+}
+
+function updateFee(idx, field, value) {
+  if (!receiptData.fees[idx]) return;
+  receiptData.fees[idx][field] = field === 'amount' ? (parseFloat(value)||0) : value;
+  if (field === 'split') renderScanTab();
+}
+
+function removeFee(idx) {
+  receiptData.fees.splice(parseInt(idx), 1);
+  renderScanTab();
+}
+
+function checkReceiptMatch() {
+  var subtotalEl = document.getElementById('r-subtotal');
+  if (!subtotalEl) return;
+  var entered = parseFloat(subtotalEl.value) || 0;
+  if (!entered || menuItems.length === 0) {
+    var el = document.getElementById('receipt-match');
+    if (el) el.style.display = 'none';
+    return;
+  }
+  var aiTotal = menuItems.reduce(function(s,m){ return s + (m.price||0); }, 0);
+  var diff = Math.abs(entered - aiTotal);
+  var el = document.getElementById('receipt-match');
+  if (!el) return;
+  el.style.display = 'block';
+  if (diff < 0.10) {
+    el.style.background = '#eaf3de';
+    el.style.color = '#3b6d11';
+    el.textContent = '✓ Totals match — AI read $' + aiTotal.toFixed(2) + ', you entered $' + entered.toFixed(2);
+  } else {
+    el.style.background = '#faeeda';
+    el.style.color = '#854f0b';
+    el.textContent = '⚠ Mismatch — AI read $' + aiTotal.toFixed(2) + ' but you entered $' + entered.toFixed(2) + '. Edit items below or adjust your entry.';
+  }
+}
+
+function confirmReceiptTotals() {
+  var subtotal = parseFloat((document.getElementById('r-subtotal')||{}).value) || 0;
+  var tax = parseFloat((document.getElementById('r-tax')||{}).value) || 0;
+  if (!subtotal) { alert('Enter the food subtotal first'); return; }
+
+  var tip = 0;
+  if (receiptData.tipIncluded) {
+    tip = parseFloat((document.getElementById('r-tip')||{}).value) || 0;
+  } else {
+    var pct = parseFloat((document.getElementById('r-tip-pct')||{}).value) || receiptData.tipPct || 20;
+    tip = (subtotal + tax) * pct / 100;
+    receiptData.tipPct = pct;
+  }
+
+  receiptData.subtotal = subtotal;
+  receiptData.tax = tax;
+  receiptData.tip = tip;
+  receiptData.confirmed = true;
+
+  // Save to Firestore
+  db.collection('dinners').doc(sessionId).update({
+    receiptData: receiptData,
+    menuItems: menuItems
+  }).then(function() {
+    renderScanTab();
+  });
+}
+
+// ── TAB 2: BLAST & CLAIM ─────────────────────────────────────────────
+function renderOrdersTab() {
+  var el = document.getElementById('tab-content');
+  if (!el) return;
+  if (!document.getElementById('add-order-card')) {
+    var html = '';
+    html += '<div class="card" id="add-order-card">';
+    html += '<div class="card-title">Add Orders</div>';
+    html += '<div id="order-persons-list"></div>';
+    html += '<button class="add-item-btn" style="margin-bottom:10px;" onclick="addPersonEntry()">+ Add Another Person</button>';
+    html += '<button class="btn-primary" onclick="saveAllOrders()">Save All Orders</button>';
+    html += '<div id="add-order-status" style="margin-top:8px;font-size:12px;color:#8a7e6e;text-align:center;min-height:18px;"></div>';
+    html += '</div>';
+    // Blast button
+    html += '<div class="card" id="blast-card">';
+    html += '<div class="card-title">Send Menu to Eaters</div>';
+    if (!receiptData.confirmed) {
+      html += '<p style="font-size:13px;color:#c0522a;">Confirm receipt totals in Tab 1 first.</p>';
+    } else if (menuItems.length === 0) {
+      html += '<p style="font-size:13px;color:#c0522a;">Scan a receipt in Tab 1 first.</p>';
+    } else {
+      html += '<p style="font-size:13px;color:#8a7e6e;margin-bottom:12px;">Eaters will tap what they ordered from the scanned receipt.</p>';
+      html += '<button class="btn-gold" onclick="sendMenuToEaters()">Send Menu to Eaters →</button>';
+    }
+    html += '<div id="send-menu-status" style="margin-top:8px;font-size:12px;color:#8a7e6e;text-align:center;"></div>';
+    html += '</div>';
+    html += '<div id="orders-list-container"></div>';
+    el.innerHTML = html;
+    addPersonEntry();
+    if (window._dinnerHostName) {
+      var firstNameInput = document.querySelector('#order-persons-list .person-name');
+      if (firstNameInput) {
+        firstNameInput.value = window._dinnerHostName;
+        var firstCheck = document.querySelector('#order-persons-list .is-host-check');
+        if (firstCheck) firstCheck.checked = true;
+      }
+    }
+  }
+  renderOrdersList();
+}
+
+// ── TAB 3: CALCULATE & PAY ───────────────────────────────────────────
+function renderPayTab() {
+  var el = document.getElementById('tab-content');
+  if (!el) return;
+
+  if (!receiptData.confirmed) {
+    el.innerHTML = '<div class="card"><p style="color:#c0522a;font-size:14px;padding:10px 0;">Confirm receipt in Tab 1 first.</p></div>';
+    return;
+  }
+
+  // Load receiptData from Firestore if not in memory
+  if (!receiptData.subtotal) {
+    db.collection('dinners').doc(sessionId).get().then(function(doc) {
+      if (doc.exists && doc.data().receiptData) {
+        receiptData = doc.data().receiptData;
+        if (doc.data().menuItems) menuItems = doc.data().menuItems;
+      }
+      renderPayTab();
+    });
+    return;
+  }
+
+  var tipLabel = receiptData.tipIncluded ? 'Included' : (receiptData.tipPct || 0) + '%';
+  var feesTotal = receiptData.fees.reduce(function(s,f){ return s+(f.amount||0); },0);
+  var grandTotal = receiptData.subtotal + receiptData.tax + receiptData.tip + feesTotal;
+
+  var html = '';
+  html += '<div class="card">';
+  html += '<div class="card-title">Receipt Summary</div>';
+  html += '<div style="font-size:13px;color:#6b5f4f;">';
+  html += '<div style="display:flex;justify-content:space-between;padding:4px 0;"><span>Food subtotal</span><span>$'+receiptData.subtotal.toFixed(2)+'</span></div>';
+  html += '<div style="display:flex;justify-content:space-between;padding:4px 0;"><span>Tax</span><span>$'+receiptData.tax.toFixed(2)+'</span></div>';
+  html += '<div style="display:flex;justify-content:space-between;padding:4px 0;"><span>Tip ('+tipLabel+')</span><span>$'+receiptData.tip.toFixed(2)+'</span></div>';
+  receiptData.fees.forEach(function(f) {
+    if (f.name && f.amount) {
+      html += '<div style="display:flex;justify-content:space-between;padding:4px 0;"><span>'+f.name+' ('+( f.split==='person' ? f.person : 'split evenly')+')</span><span>$'+parseFloat(f.amount).toFixed(2)+'</span></div>';
+    }
+  });
+  html += '<div style="display:flex;justify-content:space-between;padding:8px 0 4px;border-top:2px solid #e0d8c8;margin-top:4px;font-size:15px;font-weight:700;color:#1a1208;"><span>Grand Total</span><span>$'+grandTotal.toFixed(2)+'</span></div>';
+  html += '</div></div>';
+
+  // Calculate button
+  html += '<button class="btn-gold" onclick="calculateFromClaims()">Calculate Split →</button>';
+  html += '<div id="pay-results"></div>';
+  el.innerHTML = html;
+
+  // Restore previous results if any
+  if (lastResults) renderPayResults();
+}
+
+function calculateFromClaims() {
+  if (orders.length === 0) { alert('No orders yet.'); return; }
+
+  var feesTotal = receiptData.fees.reduce(function(s,f){ return s+(f.amount||0); },0);
+  var grandTotal = receiptData.subtotal + receiptData.tax + receiptData.tip + feesTotal;
+  var foodSubtotal = orders.reduce(function(s,o){ return s+(o.subtotal||0); },0);
+
+  // Check mismatch
+  var gap = Math.round((receiptData.subtotal - foodSubtotal) * 100) / 100;
+
+  if (Math.abs(gap) > 0.10) {
+    document.getElementById('pay-results').innerHTML =
+      '<div class="card" style="border-left:4px solid #c8963e;margin-top:14px;">' +
+        '<div class="card-title" style="color:#c8963e;">⚠ Mismatch</div>' +
+        '<p style="font-size:14px;color:#6b5f4f;margin-bottom:12px;">Receipt subtotal $'+receiptData.subtotal.toFixed(2)+' vs orders total $'+foodSubtotal.toFixed(2)+' — difference $'+Math.abs(gap).toFixed(2)+'</p>' +
+        '<div style="display:flex;gap:10px;">' +
+          '<button class="btn-gold" style="flex:1;padding:12px;font-size:14px;" onclick="doCalculate(false)">Split difference evenly</button>' +
+          '<button class="btn-outline" style="flex:1;padding:12px;font-size:14px;" onclick="doCalculate(true)">Host absorbs difference</button>' +
+        '</div>' +
+      '</div>';
+    return;
+  }
+  doCalculate(false);
+}
+
+function doCalculate(hostAbsorbs) {
+  var feesTotal = receiptData.fees.reduce(function(s,f){ return s+(f.amount||0); },0);
+  var grandTotal = receiptData.subtotal + receiptData.tax + receiptData.tip + feesTotal;
+  var foodSubtotal = orders.reduce(function(s,o){ return s+(o.subtotal||0); },0);
+  var gap = Math.round((receiptData.subtotal - foodSubtotal) * 100) / 100;
+
+  lastResults = orders.map(function(o) {
+    var sub = o.subtotal || 0;
+    var prop = foodSubtotal > 0 ? sub / foodSubtotal : 1 / orders.length;
+    var adjustedSub = hostAbsorbs ? sub : sub + (prop * gap);
+    var tax = prop * receiptData.tax;
+    var tip = prop * receiptData.tip;
+
+    // Add fee shares
+    var feeShare = 0;
+    receiptData.fees.forEach(function(f) {
+      if (!f.amount) return;
+      if (f.split === 'person') {
+        if (f.person === o.name) feeShare += f.amount;
+      } else {
+        feeShare += f.amount / orders.length;
+      }
+    });
+
+    var total = adjustedSub + tax + tip + feeShare;
+    return {
+      name: o.name, subtotal: sub, tax: tax, tip: tip,
+      feeShare: feeShare, total: total,
+      tipPct: receiptData.tipPct || 0, isHost: o.isHost
+    };
+  });
+
+  renderPayResults();
+}
+
+function renderPayResults() {
+  if (!lastResults) return;
+  var grandTotal = lastResults.reduce(function(s,r){ return s+r.total; }, 0);
+  var balanced = Math.abs(grandTotal - (receiptData.subtotal + receiptData.tax + receiptData.tip + receiptData.fees.reduce(function(s,f){ return s+(f.amount||0); },0))) < 0.10;
+
+  var trs = lastResults.map(function(r) {
+    return '<tr><td style="font-weight:600">'+r.name+(r.isHost?'<span style="font-size:10px;background:#c8963e;color:#fff;padding:1px 5px;border-radius:8px;margin-left:4px;">HOST</span>':'')+'</td>' +
+      '<td style="color:#8a7e6e">$'+r.subtotal.toFixed(2)+'</td>' +
+      '<td style="color:#8a7e6e">$'+r.tax.toFixed(2)+'</td>' +
+      '<td style="color:#8a7e6e">$'+r.tip.toFixed(2)+'</td>' +
+      (r.feeShare > 0 ? '<td style="color:#8a7e6e">$'+r.feeShare.toFixed(2)+'</td>' : '<td style="color:#8a7e6e">—</td>') +
+      '<td style="font-weight:700">$'+r.total.toFixed(2)+'</td></tr>';
+  }).join('');
+
+  var hasFees = receiptData.fees.some(function(f){ return f.amount > 0; });
+
+  document.getElementById('pay-results').innerHTML =
+    '<div class="card" style="margin-top:14px;"><div class="card-title">The Reckoning</div>' +
+    '<div style="overflow-x:auto"><table>' +
+    '<thead><tr><th>Name</th><th>Food</th><th>Tax</th><th>Tip</th>'+(hasFees?'<th>Fees</th>':'<th></th>')+'<th>Total</th></tr></thead>' +
+    '<tbody>'+trs+'</tbody></table></div>' +
+    '<div style="margin-top:14px;padding:11px;background:#f7f5f0;border-radius:10px;display:flex;justify-content:space-between;align-items:center;">' +
+    '<span style="font-size:12px;color:#8a7e6e;">Check total ties:</span>' +
+    '<span style="font-size:13px;font-weight:700;color:'+(balanced?'#5a7a5e':'#c0522a')+'">'+(balanced?'✓ Balanced':'⚠ Check totals')+'</span></div></div>' +
+    '<button class="btn-primary" id="notify-btn" onclick="notifyEaters()">Send Totals to Eaters →</button>';
+}
+
+
+function setTip(val) {
+  selectedTip = val;
+  document.querySelectorAll('.tip-preset').forEach(function(b){
+    b.className = 'tip-preset' + (parseInt(b.textContent) === val ? ' active' : '');
+  });
+  var tipInput = document.getElementById('tip-pct');
+  if (tipInput) tipInput.value = val;
+}
+
+
+function setTipIncluded(included) {
+  tipAlreadyIncluded = included;
+  document.getElementById('tip-yes').className = 'pay-opt' + (included ? ' active' : '');
+  document.getElementById('tip-no').className = 'pay-opt' + (!included ? ' active' : '');
+  document.getElementById('tip-included-section').style.display = included ? 'block' : 'none';
+  document.getElementById('tip-add-section').style.display = included ? 'none' : 'block';
+}
+
+var hostItemCount = 0;
+var hostLiveItemCount = 0;
+var behalfItemCount = 0;
+var personCount = 0;
+
+function addPersonEntry() {
+  personCount++;
+  var list = document.getElementById('order-persons-list');
+  if (!list) return;
+  var pid = 'person-' + personCount;
+  var div = document.createElement('div');
+  div.className = 'card';
+  div.id = pid;
+  div.style.cssText = 'margin-bottom:12px;background:#faf8f4;';
+  // Build using DOM to avoid quote issues
+  var header = document.createElement('div');
+  header.style.cssText = 'display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;';
+  var nameInput = document.createElement('input');
+  nameInput.type = 'text'; nameInput.className = 'person-name';
+  nameInput.placeholder = 'First name + last initial (e.g. Zu D)'; nameInput.style.cssText = 'flex:1;margin-right:8px;';
+  header.appendChild(nameInput);
+  if (personCount > 1) {
+    var xBtn = document.createElement('button');
+    xBtn.textContent = '×';
+    xBtn.style.cssText = 'background:none;border:none;color:#c0522a;font-size:20px;cursor:pointer;padding:0 4px;';
+    xBtn.onclick = (function(p){ return function(){ removePersonEntry(p); }; })(pid);
+    header.appendChild(xBtn);
+  }
+  div.appendChild(header);
+  var checkRow = document.createElement('div');
+  checkRow.style.cssText = 'display:flex;align-items:center;gap:8px;margin-bottom:10px;';
+  var chk = document.createElement('input'); chk.type = 'checkbox'; chk.className = 'is-host-check';
+  chk.style.cssText = 'width:16px;height:16px;cursor:pointer;';
+  var lbl = document.createElement('label');
+  lbl.style.cssText = 'font-size:12px;color:#6b5f4f;cursor:pointer;margin:0;';
+  lbl.textContent = 'This is my order (host)';
+  checkRow.appendChild(chk); checkRow.appendChild(lbl);
+  div.appendChild(checkRow);
+  var itemsList = document.createElement('div'); itemsList.className = 'person-items-list';
+  div.appendChild(itemsList);
+  var addBtn = document.createElement('button'); addBtn.className = 'add-item-btn'; addBtn.textContent = '+ Add Item';
+  addBtn.onclick = (function(p){ return function(){ addPersonItem(p); }; })(pid);
+  div.appendChild(addBtn);
+  list.appendChild(div);
+  addPersonItem(pid);
+}
+
+function removePersonEntry(pid) {
+  var el = document.getElementById(pid);
+  if (el) el.remove();
+}
+
+function addPersonItem(pid) {
+  var el = document.getElementById(pid);
+  if (!el) return;
+  var list = el.querySelector('.person-items-list');
+  if (!list) return;
+  var row = document.createElement('div');
+  row.className = 'item-row';
+  row.innerHTML =
+    '<input type="text" placeholder="Item name" class="pitem-name" />' +
+    '<input type="number" placeholder="$0.00" step="0.01" min="0" class="pitem-price" />' +
+    '<button class="remove-btn" onclick="removeItem(this)">×</button>';
+  list.appendChild(row);
+}
+
+function saveAllOrders() {
+  var persons = document.querySelectorAll('#order-persons-list .card');
+  if (persons.length === 0) { alert('Add at least one person'); return; }
+  var toSave = [];
+  var valid = true;
+  persons.forEach(function(p) {
+    var name = p.querySelector('.person-name').value.trim();
+    if (!name) { alert('Enter a name for each person'); valid = false; return; }
+    var isHost = p.querySelector('.is-host-check').checked;
+    var rows = p.querySelectorAll('.item-row');
+    var items = []; var subtotal = 0;
+    rows.forEach(function(row) {
+      var n = row.querySelector('.pitem-name').value.trim();
+      var pr = parseFloat(row.querySelector('.pitem-price').value) || 0;
+      if (n || pr) { items.push({ name: n||'Item', price: pr }); subtotal += pr; }
+    });
+    if (items.length === 0) { alert('Add at least one item for ' + name); valid = false; return; }
+    toSave.push({ name: name, items: items, subtotal: Math.round(subtotal*100)/100, isHost: isHost });
+  });
+  if (!valid) return;
+  var status = document.getElementById('add-order-status');
+  if (status) status.textContent = 'Saving...';
+  var batch = db.batch();
+  toSave.forEach(function(o) {
+    var docData = { name: o.name, items: o.items, subtotal: o.subtotal, submittedAt: firebase.firestore.FieldValue.serverTimestamp() };
+    if (o.isHost) docData.isHost = true;
+    batch.set(db.collection('dinners').doc(sessionId).collection('orders').doc(o.name), docData);
+  });
+  batch.commit().then(function() {
+    if (status) status.textContent = '✓ All orders saved!';
+    setTimeout(function(){ if (status) status.textContent = ''; }, 2500);
+    personCount = 0;
+    var list = document.getElementById('order-persons-list');
+    if (list) list.innerHTML = '';
+    addPersonEntry();
+  }).catch(function(e) {
+    if (status) status.textContent = 'Error: ' + e.message;
+  });
+}
+
+function addOrderItem() { }
+function removeOrderItem(btn) { removeItem(btn); }
+function autoSaveOrder() { }
+function doSaveOrder() { saveAllOrders(); }
+function addBehalfItem() { addPersonEntry(); }
+function saveBehalfOrder() { saveAllOrders(); }
+function addHostItemLive() { addPersonEntry(); }
+function saveHostMeal() { saveAllOrders(); }
+
+
+function scanReceipt() {
+  var file = document.getElementById('receipt-img').files[0];
+  if (!file) return;
+  var status = document.getElementById('scan-status');
+  if (!document.getElementById('spin-style')) {
+    var style = document.createElement('style');
+    style.id = 'spin-style';
+    style.textContent = '@keyframes spin{to{transform:rotate(360deg)}}';
+    document.head.appendChild(style);
+  }
+  status.innerHTML = '<div style="display:flex;align-items:center;gap:10px;color:#c8963e;font-weight:500;"><div style="width:18px;height:18px;border:2px solid #c8963e;border-top-color:transparent;border-radius:50%;animation:spin 0.8s linear infinite;flex-shrink:0;"></div>Reading receipt...</div>';
+
+  var img = new Image();
+  var objectUrl = URL.createObjectURL(file);
+  img.onload = function() {
+    URL.revokeObjectURL(objectUrl);
+    var canvas = document.createElement('canvas');
+    var maxSize = 1200;
+    var w = img.width, h = img.height;
+    if (w > maxSize || h > maxSize) {
+      if (w > h) { h = Math.round(h * maxSize / w); w = maxSize; }
+      else { w = Math.round(w * maxSize / h); h = maxSize; }
+    }
+    canvas.width = w; canvas.height = h;
+    canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+    var base64 = canvas.toDataURL('image/jpeg', 0.7).split(',')[1];
+
+    // Run both calls in parallel
+    var totalsCall = fetch('https://zubillscanner.zuhayr-daya.workers.dev', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ image: base64, mediaType: 'image/jpeg', mode: 'totals' })
+    }).then(function(r){ return r.json(); });
+
+    var itemsCall = fetch('https://zubillscanner.zuhayr-daya.workers.dev', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ image: base64, mediaType: 'image/jpeg', mode: 'items' })
+    }).then(function(r){ return r.json(); });
+
+    Promise.all([totalsCall, itemsCall]).then(function(results) {
+      var totalsRes = results[0];
+      var itemsRes = results[1];
+
+      if (totalsRes.success && totalsRes.data) {
+        if (totalsRes.data.subtotal) receiptData.subtotal = parseFloat(totalsRes.data.subtotal);
+        if (totalsRes.data.tax) receiptData.tax = parseFloat(totalsRes.data.tax);
+      }
+
+      if (itemsRes.success && itemsRes.data && itemsRes.data.length > 0) {
+        // Expand by quantity
+        var expanded = [];
+        itemsRes.data.forEach(function(item) {
+          var qty = item.qty || 1;
+          for (var i = 0; i < qty; i++) {
+            expanded.push({ name: item.name, price: parseFloat(item.price) || 0, claimedBy: null });
+          }
+        });
+        menuItems = expanded;
+        status.innerHTML = '<span style="color:#5a7a5e;font-weight:500;">✓ Found ' + expanded.length + ' items and totals — review below</span>';
+      } else {
+        status.innerHTML = '<span style="color:#8a7e6e;">Could not read items — enter totals manually below</span>';
+        if (totalsRes.success) status.innerHTML += ' (totals auto-filled)';
+      }
+
+      // Re-render the full scan tab now that we have data
+      renderScanTab();
+    }).catch(function(e) {
+      status.innerHTML = '<span style="color:#c0522a;">Error: ' + e.message + '</span>';
+    });
+  };
+  img.src = objectUrl;
+}
+
+function renderItemAssignment(items) {
+  // Expand items by quantity e.g. {name:"Chicken Kabob", price:24, qty:2} -> 2 rows
+  var expanded = [];
+  items.forEach(function(item) {
+    var qty = item.qty || 1;
+    for (var i = 0; i < qty; i++) {
+      expanded.push({ name: item.name, price: item.price, id: expanded.length });
+    }
+  });
+  menuItems = expanded;
+
+  var el = document.getElementById('scan-items-result');
+  if (!el) return;
+
+  var rows = expanded.map(function(item, idx) {
+    return '<div class="menu-item-row" id="mrow-'+idx+'" style="display:flex;align-items:center;gap:8px;padding:10px 0;border-bottom:1px solid #f0ebe0;">' +
+      '<div style="flex:1;">' +
+        '<input type="text" class="menu-item-name" value="'+item.name.replace(/"/g,'&quot;')+'" style="width:100%;font-size:14px;border:none;background:transparent;font-weight:500;color:#1a1208;" />' +
+      '</div>' +
+      '<input type="number" class="menu-item-price" value="'+item.price+'" step="0.01" min="0" style="width:70px;font-size:14px;font-weight:700;color:#c8963e;border:none;background:transparent;text-align:right;" />' +
+      '<button onclick="removeMenuItem('+idx+')" style="background:none;border:none;color:#c0522a;font-size:18px;cursor:pointer;padding:0 4px;">×</button>' +
+    '</div>';
+  }).join('');
+
+  el.innerHTML =
+    '<div class="card" style="border-left:4px solid #5a7a5e;">' +
+      '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">' +
+        '<div class="card-title" style="margin-bottom:0;">Confirm Receipt Items</div>' +
+        '<button onclick="addMenuItem()" style="font-size:12px;color:#c8963e;background:none;border:1.5px solid #c8963e;border-radius:8px;padding:4px 10px;cursor:pointer;">+ Add Item</button>' +
+      '</div>' +
+      '<p style="font-size:12px;color:#8a7e6e;margin-bottom:12px;">Edit names/prices, remove wrong items, then send to eaters.</p>' +
+      '<div id="menu-items-list">' + rows + '</div>' +
+      '<button class="btn-primary" style="margin-top:14px;" onclick="sendMenuToEaters()">Send Menu to Eaters →</button>' +
+      '<div id="send-menu-status" style="margin-top:8px;font-size:12px;color:#8a7e6e;text-align:center;"></div>' +
+    '</div>';
+}
+
+function removeMenuItem(idx) {
+  menuItems.splice(idx, 1);
+  renderItemAssignment(menuItems.map(function(m){ return {name:m.name, price:m.price, qty:1}; }));
+}
+
+function addMenuItem() {
+  var list = document.getElementById('menu-items-list');
+  if (!list) return;
+  var idx = menuItems.length;
+  menuItems.push({ name: '', price: 0, id: idx });
+  var div = document.createElement('div');
+  div.className = 'menu-item-row';
+  div.id = 'mrow-' + idx;
+  div.style.cssText = 'display:flex;align-items:center;gap:8px;padding:10px 0;border-bottom:1px solid #f0ebe0;';
+  div.innerHTML =
+    '<div style="flex:1;"><input type="text" class="menu-item-name" placeholder="Item name" style="width:100%;font-size:14px;border:none;background:transparent;font-weight:500;color:#1a1208;" /></div>' +
+    '<input type="number" class="menu-item-price" value="0" step="0.01" min="0" style="width:70px;font-size:14px;font-weight:700;color:#c8963e;border:none;background:transparent;text-align:right;" />' +
+    '<button onclick="removeMenuItem('+idx+')" style="background:none;border:none;color:#c0522a;font-size:18px;cursor:pointer;padding:0 4px;">×</button>';
+  list.appendChild(div);
+}
+
+function sendMenuToEaters() {
+  // Collect confirmed items from the edit fields
+  var rows = document.querySelectorAll('.menu-item-row');
+  var confirmedItems = [];
+  rows.forEach(function(row, idx) {
+    var nameEl = row.querySelector('.menu-item-name');
+    var priceEl = row.querySelector('.menu-item-price');
+    var name = nameEl ? nameEl.value.trim() : '';
+    var price = priceEl ? parseFloat(priceEl.value) || 0 : 0;
+    if (name) confirmedItems.push({ name: name, price: price, id: idx, claimedBy: null });
+  });
+
+  if (confirmedItems.length === 0) { alert('No items to send'); return; }
+
+  var status = document.getElementById('send-menu-status');
+  if (status) status.textContent = 'Sending...';
+
+  db.collection('dinners').doc(sessionId).update({
+    menuItems: confirmedItems,
+    menuSentAt: firebase.firestore.FieldValue.serverTimestamp()
+  }).then(function() {
+    menuItems = confirmedItems;
+    if (status) status.innerHTML = '<span style="color:#5a7a5e;">✓ Menu sent! Eaters will see items to claim when they open their link.</span>';
+  }).catch(function(e) {
+    if (status) status.textContent = 'Error: ' + e.message;
+  });
+}
+
+function applyItemAssignment() {
+  var selects = document.querySelectorAll('.item-assign');
+  var assignments = {};
+  selects.forEach(function(sel) {
+    var person = sel.value;
+    if (!person) return;
+    if (!assignments[person]) assignments[person] = [];
+    assignments[person].push({ name: sel.dataset.name, price: parseFloat(sel.dataset.price) });
+  });
+
+  if (Object.keys(assignments).length === 0) {
+    alert('Assign at least one item to someone first.');
+    return;
+  }
+
+  var batch = db.batch();
+  Object.keys(assignments).forEach(function(person) {
+    var existingOrder = orders.find(function(o){ return o.name === person; });
+    var existingItems = existingOrder ? existingOrder.items.slice() : [];
+    var newItems = existingItems.concat(assignments[person]);
+    var subtotal = newItems.reduce(function(s,i){ return s + i.price; }, 0);
+    var docData = {
+      name: person,
+      items: newItems,
+      subtotal: Math.round(subtotal * 100) / 100,
+      submittedAt: firebase.firestore.FieldValue.serverTimestamp()
+    };
+    if (existingOrder && existingOrder.isHost) docData.isHost = true;
+    batch.set(db.collection('dinners').doc(sessionId).collection('orders').doc(person), docData);
+  });
+
+  batch.commit().then(function() {
+    var el = document.getElementById('scan-items-result');
+    if (el) el.innerHTML = '<div style="padding:12px;background:#eaf3de;border-radius:10px;font-size:14px;color:#3b6d11;font-weight:500;">✓ Items assigned and orders updated!</div>';
+  }).catch(function(e) {
+    alert('Error: ' + e.message);
+  });
+}
+
+function calculate() {
+  // Use receiptData from Tab 1
+  var foodTotal = receiptData.subtotal || 0;
+  var taxAmount = receiptData.tax || 0;
+  if (!foodTotal) { alert('Confirm receipt totals in Tab 1 first.'); return; }
+  var tipAmount, tipPct, tipLabel;
+  if (tipAlreadyIncluded) {
+    tipAmount = parseFloat(document.getElementById('tip-included-amt').value) || 0;
+    tipPct = Math.round((tipAmount / foodTotal) * 100);
+    tipLabel = 'Included (' + tipPct + '%)';
+  } else {
+    tipPct = parseFloat(document.getElementById('tip-pct').value) || 0;
+    tipAmount = (foodTotal + taxAmount) * (tipPct / 100);
+    tipLabel = tipPct + '%';
+  }
+
+  var allOrders = orders.slice();
+  if (allOrders.length === 0) { alert('No orders yet. Make sure everyone has submitted and you have saved your own meal in Live Orders.'); return; }
+
+  var ordersTotal = allOrders.reduce(function(s,o){ return s+(o.subtotal||0); },0);
+  var gap = Math.round((foodTotal - ordersTotal) * 100) / 100;
+
+  if (Math.abs(gap) > 0.05) {
+    // Store state for after the user resolves the gap inline
+    pendingCalcData = { foodTotal: foodTotal, taxAmount: taxAmount, tipAmount: tipAmount, tipPct: tipPct, tipLabel: tipLabel, allOrders: allOrders, ordersTotal: ordersTotal, gap: gap };
+    document.getElementById('split-results').innerHTML =
+      '<div class="card" style="border-left:4px solid #c8963e;margin-top:4px;">' +
+        '<div class="card-title" style="color:#c8963e;">&#9888; Bill Mismatch</div>' +
+        '<p style="font-size:14px;color:#6b5f4f;margin-bottom:6px;">Receipt total <strong>$' + foodTotal.toFixed(2) + '</strong> vs. sum of all orders <strong>$' + ordersTotal.toFixed(2) + '</strong>.</p>' +
+        '<p style="font-size:13px;color:#8a7e6e;margin-bottom:16px;">Difference: <strong style="color:#c0522a;">$' + Math.abs(gap).toFixed(2) + '</strong> — how should we handle it?</p>' +
+        '<div style="display:flex;gap:10px;">' +
+          '<button class="btn-gold" style="flex:1;padding:12px;font-size:14px;" onclick="finishCalculate(false)">Split evenly across everyone</button>' +
+          '<button class="btn-outline" style="flex:1;padding:12px;font-size:14px;" onclick="finishCalculate(true)">Host absorbs the difference</button>' +
+        '</div>' +
+      '</div>';
+    return;
+  }
+
+  pendingCalcData = { foodTotal: foodTotal, taxAmount: taxAmount, tipAmount: tipAmount, tipPct: tipPct, tipLabel: tipLabel, allOrders: allOrders, ordersTotal: ordersTotal, gap: gap };
+  finishCalculate(false);
+}
+
+function finishCalculate(hostAbsorbsGap) {
+  if (!pendingCalcData) return;
+  var d = pendingCalcData;
+  pendingCalcData = null;
+  var grandTotal = d.foodTotal + d.taxAmount + d.tipAmount;
+
+  lastResults = d.allOrders.map(function(o){
+    var sub = o.subtotal||0;
+    var prop = d.ordersTotal>0 ? sub/d.ordersTotal : 1/d.allOrders.length;
+    var adjustedSub = hostAbsorbsGap ? sub : sub + (prop * d.gap);
+    var tax = prop * d.taxAmount;
+    var tip = prop * d.tipAmount;
+    var total = adjustedSub + tax + tip;
+    return { name:o.name, subtotal:sub, adjustedSub:adjustedSub, tax:tax, tip:tip, total:total, tipPct:d.tipPct, isHost:o.isHost };
+  });
+  totalsSent = false;
+  lastSplitInputs = { foodTotal: d.foodTotal, taxAmount: d.taxAmount, tipAmount: d.tipAmount, tipLabel: d.tipLabel, grandTotal: grandTotal };
+  renderSplitResults();
+}
+
+function renderSplitResults() {
+  if (!lastResults || !lastSplitInputs) return;
+  var d = lastSplitInputs;
+  var checkTotal = lastResults.reduce(function(s,r){ return s+r.total; },0);
+  var balanced = Math.abs(checkTotal - d.grandTotal) < 0.10;
+  var trs = lastResults.map(function(r){
+    return '<tr><td style="font-weight:600">' + r.name + '</td>' +
+      '<td style="color:#8a7e6e">$' + r.subtotal.toFixed(2) + '</td>' +
+      '<td style="color:#8a7e6e">$' + r.tax.toFixed(2) + '</td>' +
+      '<td style="color:#8a7e6e">$' + r.tip.toFixed(2) + '</td>' +
+      '<td style="font-weight:700">$' + r.total.toFixed(2) + '</td></tr>';
+  }).join('');
+  var resultsEl = document.getElementById('split-results');
+  if (!resultsEl) return;
+  resultsEl.innerHTML =
+    '<div class="card"><div class="card-title">The Reckoning</div>' +
+    '<div style="margin-bottom:10px;font-size:12px;color:#8a7e6e;">Food $' + d.foodTotal.toFixed(2) + ' · Tax $' + d.taxAmount.toFixed(2) + ' · Tip ' + d.tipLabel + ' ($' + d.tipAmount.toFixed(2) + ')' + (tipAlreadyIncluded?' — already included':'') + '</div>' +
+    '<div style="overflow-x:auto"><table>' +
+    '<thead><tr><th>Name</th><th>Food</th><th>Tax</th><th>Tip</th><th>Total</th></tr></thead>' +
+    '<tbody>' + trs +
+    '<tr class="totals-row"><td>Total</td><td>$' + d.foodTotal.toFixed(2) + '</td><td>$' + d.taxAmount.toFixed(2) + '</td><td>$' + d.tipAmount.toFixed(2) + '</td><td>$' + d.grandTotal.toFixed(2) + '</td></tr>' +
+    '</tbody></table></div>' +
+    '<div style="margin-top:14px;padding:11px;background:#f7f5f0;border-radius:10px;display:flex;justify-content:space-between;align-items:center;">' +
+    '<span style="font-size:12px;color:#8a7e6e;">Check total ties:</span>' +
+    '<span style="font-size:13px;font-weight:700;color:' + (balanced?'#5a7a5e':'#c0522a') + '">' +
+    (balanced ? '✓ Balanced' : '⚠ Off by $' + Math.abs(checkTotal - d.grandTotal).toFixed(2)) + '</span></div></div>' +
+    (totalsSent
+      ? '<div style="padding:14px;background:#eaf3de;border-radius:11px;font-size:14px;color:#3b6d11;font-weight:500;margin-bottom:8px;">✓ Totals already sent to eaters.</div>' +
+        '<button class="btn-outline" onclick="recalculate()">Recalculate / Resend →</button>'
+      : '<button class="btn-primary" id="notify-btn" onclick="notifyEaters()">Send Totals to Eaters →</button>');
+}
+
+function recalculate() {
+  totalsSent = false;
+  lastResults = null;
+  lastSplitInputs = null;
+  renderSplitTab();
+}
+
+function notifyEaters() {
+  if (!lastResults || lastResults.length === 0) { alert('Calculate the split first.'); return; }
+  var btn = document.getElementById('notify-btn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Sending...'; }
+  var batch = db.batch();
+  lastResults.forEach(function(r) {
+    var docName = r.name.replace(' (you)', '');
+    var matchedOrder = orders.find(function(o){ return o.name === docName && o.isHost; });
+    if (matchedOrder) return;
+    batch.update(
+      db.collection('dinners').doc(sessionId).collection('orders').doc(docName),
+      {
+        finalOwes: Math.round(r.total * 100) / 100,
+        taxShare: Math.round(r.tax * 100) / 100,
+        tipShare: Math.round(r.tip * 100) / 100,
+        tipPct: r.tipPct || selectedTip
+      }
+    );
+  });
+  batch.commit().then(function() {
+    totalsSent = true;
+    renderSplitResults();
+  }).catch(function(e) {
+    if (btn) { btn.disabled = false; btn.textContent = 'Send Totals to Eaters →'; }
+    alert('Error sending totals: ' + e.message);
+  });
+}
+// ── WHO PAID TAB ─────────────────────────────────────────
+function renderPaidTab() {
+  var el = document.getElementById('tab-content');
+  if (!el) return;
+  var notified = orders.filter(function(o){ return o.finalOwes || o.isHost; });
+  if (notified.length === 0) {
+    el.innerHTML = '<div class="card"><div class="empty-state">Send totals to eaters first,<br>then track payments here.</div></div>';
+    return;
+  }
+  var hostResult = lastResults ? lastResults.find(function(r){ return r.isHost; }) : null;
+  var paidCount = notified.filter(function(o){ return o.isHost || paidStatus[o.name]; }).length;
+  var totalOwed = notified.reduce(function(s,o){
+    if (o.isHost) return s + (hostResult ? hostResult.total : 0);
+    return s + (o.finalOwes||0);
+  }, 0);
+  var totalPaid = notified.reduce(function(s,o){
+    if (o.isHost) return s + (hostResult ? hostResult.total : 0);
+    return s + (paidStatus[o.name] ? (o.finalOwes||0) : 0);
+  }, 0);
+
+  var card = document.createElement('div');
+  card.className = 'card';
+
+  var header = document.createElement('div');
+  header.style.cssText = 'display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;';
+  header.innerHTML = '<div class="card-title" style="margin-bottom:0;">Payment Tracker</div>' +
+    '<div style="font-size:13px;color:#5a7a5e;font-weight:600;">' + paidCount + ' / ' + notified.length + ' paid</div>';
+  card.appendChild(header);
+
+  notified.forEach(function(o) {
+    var isPaid = paidStatus[o.name] || false;
+    var row = document.createElement('div');
+    row.className = 'pay-check-row';
+
+    var info = document.createElement('div');
+    var nameEl = document.createElement('div');
+    nameEl.style.cssText = 'font-size:15px;font-weight:600;' + (isPaid ? 'text-decoration:line-through;color:#8a7e6e;' : '');
+    nameEl.textContent = o.name;
+    if (o.isHost) {
+      var badge = document.createElement('span');
+      badge.style.cssText = 'font-size:10px;background:#c8963e;color:#fff;padding:2px 6px;border-radius:10px;margin-left:4px;';
+      badge.textContent = 'HOST';
+      nameEl.appendChild(badge);
+    }
+    var sub = document.createElement('div');
+    sub.style.cssText = 'font-size:13px;color:#8a7e6e;';
+    sub.textContent = o.isHost ? 'Paid by card' : 'Owes $' + (o.finalOwes||0).toFixed(2);
+    info.appendChild(nameEl);
+    info.appendChild(sub);
+    row.appendChild(info);
+
+    if (o.isHost) {
+      var covered = document.createElement('div');
+      covered.style.cssText = 'text-align:right;';
+      covered.innerHTML = '<div style="font-size:13px;font-weight:700;color:#1a1208;">$' + (hostResult ? hostResult.total.toFixed(2) : '—') + '</div><div style="font-size:11px;color:#5a7a5e;">Covered</div>';
+      row.appendChild(covered);
+    } else {
+      var btn = document.createElement('button');
+      btn.className = 'check-btn' + (isPaid ? ' paid' : '');
+      btn.textContent = isPaid ? '✓' : '';
+      btn.onclick = (function(name) { return function() { togglePaid(name); }; })(o.name);
+      row.appendChild(btn);
+    }
+    card.appendChild(row);
+  });
+
+  var totals = document.createElement('div');
+  totals.style.cssText = 'margin-top:14px;padding-top:14px;border-top:2px solid #e8e0d0;';
+  totals.innerHTML =
+    '<div style="display:flex;justify-content:space-between;font-size:13px;color:#8a7e6e;margin-bottom:6px;"><span>Total owed</span><span>$'+totalOwed.toFixed(2)+'</span></div>' +
+    '<div style="display:flex;justify-content:space-between;font-size:15px;font-weight:700;color:#5a7a5e;"><span>Total paid</span><span>$'+totalPaid.toFixed(2)+'</span></div>' +
+    '<div style="display:flex;justify-content:space-between;font-size:13px;color:#c0522a;margin-top:4px;"><span>Still owed</span><span>$'+(totalOwed-totalPaid).toFixed(2)+'</span></div>';
+  card.appendChild(totals);
+
+  el.innerHTML = '';
+  el.appendChild(card);
+}
+function togglePaid(name) {
+  paidStatus[name] = !paidStatus[name];
+  renderPaidTab();
+}
+
+// ── EATER VIEW ───────────────────────────────────────────
+function editOrder() {
+  var name = localStorage.getItem('eater-name-' + sessionId);
+  if (!name) { showEaterView(); return; }
+  // Load existing order and pre-fill form
+  db.collection('dinners').doc(sessionId).get().then(function(dDoc) {
+    var dinner = dDoc.data();
+    db.collection('dinners').doc(sessionId).collection('orders').doc(name).get().then(function(oDoc) {
+      var existingItems = oDoc.exists ? oDoc.data().items : [];
+      renderEaterForm(dinner, name, existingItems);
+    });
+  });
+}
+
+function showEaterView() {
+  // Kill any host listeners
+  if (unsubscribe) { unsubscribe(); unsubscribe = null; }
+  setRole('eater');
+  db.collection('dinners').doc(sessionId).get().then(function(doc) {
+    if (!doc.exists) {
+      document.getElementById('app').innerHTML = '<div class="card"><p style="color:#c0522a;padding:20px;text-align:center;">Dinner not found. Ask the host for the correct link.</p></div>';
+      return;
+    }
+    var dinner = doc.data();
+    document.getElementById('header-sub').textContent = dinner.restaurant + ' · ' + formatDate(dinner.date);
+    window._dinnerHostName = dinner.hostName || '';
+    if (dinner.receiptData) receiptData = dinner.receiptData;
+    if (dinner.menuItems) menuItems = dinner.menuItems;
+    var savedName = localStorage.getItem('eater-name-' + sessionId);
+    if (savedName) {
+      checkEaterStatus(savedName, dinner);
+    } else {
+      renderEaterForm(dinner);
+    }
+  });
+}
+
+function renderEaterForm(dinner, prefillName, prefillItems) {
+  var isEdit = prefillName && prefillItems && prefillItems.length > 0;
+  var hasMenu = dinner.menuItems && dinner.menuItems.length > 0;
+
+  var html = '';
+  html += '<div class="card" style="border-left:4px solid #5a7a5e;">';
+  html += '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">';
+  html += '<div style="font-size:18px;font-weight:700;">' + dinner.restaurant + '</div>';
+  html += '<div style="font-size:11px;font-weight:700;background:#5a7a5e;color:#fff;padding:5px 12px;border-radius:20px;">EATER</div>';
+  html += '</div>';
+  html += '<div style="font-size:13px;color:#8a7e6e;">' + formatDate(dinner.date) + ' · ' + (isEdit ? 'Update your order' : hasMenu ? 'Tap what you ordered' : 'Enter what you ordered') + '</div>';
+  html += '</div>';
+  html += '<div class="card">';
+  html += '<div class="card-title">Your Name</div>';
+  html += '<input type="text" id="guest-name" placeholder="First name + last initial (e.g. Sarah K)" value="' + (prefillName||'') + '" ' + (prefillName?'readonly style="background:#f0ebe0;color:#8a7e6e;"':'') + ' />';
+  html += '<p style="font-size:11px;color:#8a7e6e;margin-top:4px;">Use first name + last initial to avoid duplicates</p>';
+  html += '</div>';
+
+  if (hasMenu) {
+    // Show tap-to-claim menu
+    html += '<div class="card">';
+    html += '<div class="card-title">Tap Items You Ordered</div>';
+    html += '<p style="font-size:12px;color:#8a7e6e;margin-bottom:12px;">Tap each item you ordered. Items already claimed by others are shown.</p>';
+    html += '<div id="menu-claim-list">';
+    dinner.menuItems.forEach(function(item, idx) {
+      var claimed = item.claimedBy ? item.claimedBy : null;
+      var isMe = prefillName && claimed === prefillName;
+      var claimedText = claimed ? '<span style="font-size:11px;color:#8a7e6e;margin-left:6px;">← ' + claimed + '</span>' : '';
+      html += '<div class="menu-claim-row" id="claim-'+idx+'" data-idx="'+idx+'" data-name="'+item.name.replace(/"/g,'&quot;')+'" data-price="'+item.price+'" onclick="toggleClaim(this)" style="display:flex;align-items:center;justify-content:space-between;padding:12px;margin-bottom:8px;border-radius:10px;border:1.5px solid '+(isMe?'#c8963e':'#e0d8c8')+';background:'+(isMe?'#fdf6eb':'#faf8f4')+';cursor:pointer;">';
+      html += '<div style="display:flex;align-items:center;gap:10px;">';
+      html += '<div style="width:22px;height:22px;border-radius:50%;border:2px solid '+(isMe?'#c8963e':'#e0d8c8')+';background:'+(isMe?'#c8963e':'#fff')+';display:flex;align-items:center;justify-content:center;font-size:12px;color:#fff;flex-shrink:0;">'+(isMe?'✓':'')+'</div>';
+      html += '<div><div style="font-size:14px;font-weight:500;">' + item.name + claimedText + '</div></div>';
+      html += '</div>';
+      html += '<div style="font-size:14px;font-weight:700;color:#c8963e;">$' + parseFloat(item.price).toFixed(2) + '</div>';
+      html += '</div>';
+    });
+    html += '</div>';
+    html += '<div style="margin-top:12px;padding-top:12px;border-top:1px solid #f0ebe0;">';
+    html += '<div style="font-size:13px;color:#8a7e6e;">Your total: <span id="claim-total" style="font-weight:700;color:#1a1208;">$0.00</span></div>';
+    html += '</div>';
+    html += '</div>';
+  } else {
+    // Manual entry fallback
+    html += '<div class="card">';
+    html += '<div class="card-title">Items You Ordered</div>';
+    html += '<div id="items-list"></div>';
+    html += '<button class="add-item-btn" onclick="addItem()">+ Add Item</button>';
+    html += '</div>';
+  }
+
+  html += '<button class="btn-primary" id="submit-btn" onclick="submitOrder()">' + (isEdit ? 'Update My Order' : 'Submit My Order') + '</button>';
+  html += '<p style="text-align:center;font-size:12px;color:#8a7e6e;margin-top:10px;">The host will calculate tax & tip and send you your total</p>';
+  document.getElementById('app').innerHTML = html;
+
+  if (hasMenu && prefillName) {
+    // Pre-check items already claimed by this person
+    updateClaimTotal();
+  } else if (!hasMenu) {
+    if (prefillItems && prefillItems.length > 0) {
+      prefillItems.forEach(function(item) { addItem(item.name, item.price); });
+    } else {
+      addItem();
+    }
+  }
+}
+
+function toggleClaim(el) {
+  var idx = parseInt(el.dataset.idx);
+  var isSelected = el.style.background === 'rgb(253, 246, 235)' || el.style.background === '#fdf6eb';
+  if (isSelected) {
+    el.style.background = '#faf8f4';
+    el.style.borderColor = '#e0d8c8';
+    var circle = el.querySelector('div > div');
+    if (circle) { circle.style.background = '#fff'; circle.style.borderColor = '#e0d8c8'; circle.textContent = ''; }
+  } else {
+    el.style.background = '#fdf6eb';
+    el.style.borderColor = '#c8963e';
+    var circle = el.querySelector('div > div');
+    if (circle) { circle.style.background = '#c8963e'; circle.style.borderColor = '#c8963e'; circle.textContent = '✓'; }
+  }
+  updateClaimTotal();
+}
+
+function updateClaimTotal() {
+  var total = 0;
+  document.querySelectorAll('.menu-claim-row').forEach(function(el) {
+    if (el.style.background === 'rgb(253, 246, 235)' || el.style.background === '#fdf6eb') {
+      total += parseFloat(el.dataset.price) || 0;
+    }
+  });
+  var el = document.getElementById('claim-total');
+  if (el) el.textContent = '$' + total.toFixed(2);
+}
+
+function checkEaterStatus(name, dinner) {
+  db.collection('dinners').doc(sessionId).collection('orders').doc(name).get().then(function(doc) {
+    if (!doc.exists) {
+      renderEaterWaiting(name, { items: [], subtotal: 0 }, dinner);
+      return;
+    }
+    var data = doc.data();
+    if (data.finalOwes) renderEaterOwes(name, data, dinner);
+    else renderEaterWaiting(name, data, dinner);
+  });
+}
+
+function renderEaterWaiting(name, data, dinner) {
+  var html = '';
+  html += '<div class="card" style="text-align:center;padding:32px 24px;">';
+  html += '<div style="font-size:40px;margin-bottom:12px;">⏳</div>';
+  html += '<div style="font-size:20px;font-weight:700;margin-bottom:8px;">Order received, ' + name + '!</div>';
+  html += '<p style="color:#8a7e6e;font-size:14px;margin-bottom:20px;">The host is calculating the split.<br>Your total will appear here automatically.</p>';
+  html += '<div style="padding:14px;background:#f7f5f0;border-radius:10px;margin-bottom:16px;">';
+  data.items.forEach(function(i) {
+    html += '<div style="display:flex;justify-content:space-between;font-size:13px;padding:3px 0;color:#6b5f4f;"><span>'+i.name+'</span><span>$'+parseFloat(i.price).toFixed(2)+'</span></div>';
+  });
+  html += '<div style="border-top:1px solid #e0d8c8;margin-top:8px;padding-top:8px;display:flex;justify-content:space-between;font-size:14px;font-weight:600;"><span>Your food subtotal</span><span>$'+parseFloat(data.subtotal).toFixed(2)+'</span></div>';
+  html += '</div>';
+  html += '<p style="font-size:12px;color:#c8963e;margin-bottom:12px;">Checking for your total...</p>';
+  html += '<button class="btn-outline" onclick="editOrder()" style="margin-top:4px;">Edit My Order</button>';
+  html += '</div>';
+  document.getElementById('app').innerHTML = html;
+
+  // Listen in real-time for finalOwes
+  var unsub = db.collection('dinners').doc(sessionId).collection('orders').doc(name)
+    .onSnapshot(function(doc) {
+      if (doc.exists && doc.data().finalOwes) {
+        unsub();
+        db.collection('dinners').doc(sessionId).get().then(function(dDoc) {
+          renderEaterOwes(name, doc.data(), dDoc.data());
+        });
+      }
+    });
+}
+
+function renderEaterOwes(name, data, dinner) {
+  document.getElementById('app').innerHTML =
+    '<div class="card" style="text-align:center;padding:32px 24px;">' +
+      '<div style="font-size:13px;color:#8a7e6e;font-weight:600;text-transform:uppercase;letter-spacing:0.8px;">Your total for ' + dinner.restaurant + '</div>' +
+      '<div class="big-amount">$' + data.finalOwes.toFixed(2) + '</div>' +
+      '<p style="color:#8a7e6e;font-size:14px;margin-bottom:20px;">Includes your share of tax & tip</p>' +
+      '<div style="padding:14px;background:#f7f5f0;border-radius:10px;margin-bottom:16px;">' +
+        data.items.map(function(i){
+          return '<div style="display:flex;justify-content:space-between;font-size:13px;padding:3px 0;color:#6b5f4f;"><span>'+i.name+'</span><span>$'+parseFloat(i.price).toFixed(2)+'</span></div>';
+        }).join('') +
+        '<div style="border-top:1px solid #e0d8c8;margin-top:8px;padding-top:8px;">' +
+          '<div style="display:flex;justify-content:space-between;font-size:13px;color:#8a7e6e;padding:2px 0;"><span>Food subtotal</span><span>$'+parseFloat(data.subtotal).toFixed(2)+'</span></div>' +
+          '<div style="display:flex;justify-content:space-between;font-size:13px;color:#8a7e6e;padding:2px 0;"><span>Your share of tax</span><span>$'+parseFloat(data.taxShare||0).toFixed(2)+'</span></div>' +
+          '<div style="display:flex;justify-content:space-between;font-size:13px;color:#8a7e6e;padding:2px 0;"><span>Your share of tip ('+(data.tipPct||0)+'%)</span><span>$'+parseFloat(data.tipShare||0).toFixed(2)+'</span></div>' +
+        '</div>' +
+      '</div>' +
+      '<div style="background:#1a1208;color:#f7f5f0;border-radius:11px;padding:16px;font-size:16px;font-weight:700;">' +
+        (dinner.payMethod||'Zelle') + (dinner.payHandle?' @'+dinner.payHandle:'') + ' → $' + data.finalOwes.toFixed(2) +
+      '</div>' +
+    '</div>';
+}
+
+function addItem(name, price) {
+  itemCount++;
+  var list = document.getElementById('items-list');
+  var div = document.createElement('div');
+  div.className = 'item-row';
+  div.id = 'item-' + itemCount;
+  div.innerHTML =
+    '<input type="text" placeholder="Item name" class="item-name" value="' + (name||'') + '" />' +
+    '<input type="number" placeholder="$0.00" step="0.01" min="0" class="item-price" value="' + (price||'') + '" />' +
+    '<button class="remove-btn" onclick="removeItem(this)">×</button>';
+  list.appendChild(div);
+}
+
+function removeItem(btn) {
+  var row = btn.parentElement;
+  if (document.querySelectorAll('#items-list .item-row').length > 1) row.remove();
+}
+
+function submitOrder() {
+  var name = document.getElementById('guest-name').value.trim();
+  if (!name) { alert('Please enter your name'); return; }
+
+  var items = []; var subtotal = 0;
+
+  // Check if we're in menu claim mode
+  var claimRows = document.querySelectorAll('.menu-claim-row');
+  if (claimRows.length > 0) {
+    claimRows.forEach(function(el) {
+      if (el.style.background === 'rgb(253, 246, 235)' || el.style.background === '#fdf6eb') {
+        var itemName = el.dataset.name;
+        var price = parseFloat(el.dataset.price) || 0;
+        items.push({ name: itemName, price: price });
+        subtotal += price;
+      }
+    });
+    if (items.length === 0) { alert('Tap at least one item you ordered'); return; }
+
+    // Update claimedBy on each item in Firestore
+    db.collection('dinners').doc(sessionId).get().then(function(doc) {
+      if (!doc.exists) return;
+      var dinner = doc.data();
+      var updatedMenu = (dinner.menuItems || []).map(function(item, idx) {
+        var claimEl = document.getElementById('claim-' + idx);
+        if (claimEl && (claimEl.style.background === 'rgb(253, 246, 235)' || claimEl.style.background === '#fdf6eb')) {
+          return Object.assign({}, item, { claimedBy: name });
+        }
+        return item;
+      });
+      return db.collection('dinners').doc(sessionId).update({ menuItems: updatedMenu });
+    });
+  } else {
+    // Manual entry mode
+    var rows = document.querySelectorAll('.item-row');
+    rows.forEach(function(row) {
+      var n = row.querySelector('.item-name').value.trim();
+      var p = parseFloat(row.querySelector('.item-price').value) || 0;
+      if (n || p) { items.push({ name: n||'Item', price: p }); subtotal += p; }
+    });
+    if (items.length === 0) { alert('Add at least one item'); return; }
+  }
+  var btn = document.getElementById('submit-btn');
+  if(btn){ btn.disabled = true; btn.textContent = 'Submitting...'; }
+  db.collection('dinners').doc(sessionId).collection('orders').doc(name).set({
+    name: name, items: items,
+    subtotal: Math.round(subtotal*100)/100,
+    submittedAt: firebase.firestore.FieldValue.serverTimestamp()
+  }).then(function() {
+    localStorage.setItem('eater-name-' + sessionId, name);
+    localStorage.setItem('last-eater-session', sessionId);
+    // Get dinner data and show waiting screen directly - no re-routing
+    db.collection('dinners').doc(sessionId).get().then(function(doc) {
+      var dinner = doc.exists ? doc.data() : { restaurant: '', date: '' };
+      renderEaterWaiting(name, { items: items, subtotal: subtotal }, dinner);
+    });
+  }).catch(function(e) {
+    alert('Error: ' + e.message);
+    if(btn){ btn.disabled = false; btn.textContent = 'Submit My Order'; }
+  });
+}
+
+function setRole(role) {
+  var pill = document.getElementById('role-pill');
+  pill.style.display = 'block';
+  pill.className = 'role-pill role-' + role;
+  pill.textContent = role === 'host' ? 'HOST' : 'EATER';
+}
+
+function formatDate(d) {
+  if (!d) return '';
+  var parts = d.split('-');
+  var months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  return months[parseInt(parts[1])-1] + ' ' + parseInt(parts[2]) + ', ' + parts[0];
+}
+</script>
+</body>
+</html>
