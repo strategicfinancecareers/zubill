@@ -81,20 +81,13 @@ td { padding: 11px 10px; border-bottom: 1px solid #f0ebe0; }
 </div>
 <div class="container" id="app"></div>
 
-<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
-<script>
-firebase.initializeApp({
-  apiKey: "AIzaSyDOlFfT72KhDvKzCXygbxGZStQDS-WTWrI",
-  authDomain: "bill-splitter-f035e.firebaseapp.com",
-  projectId: "bill-splitter-f035e",
-  storageBucket: "bill-splitter-f035e.firebasestorage.app",
-  messagingSenderId: "1050479902472",
-  appId: "1:1050479902472:web:8c555ca2b62c0532a136bd"
-});
-var db = firebase.firestore();
-var auth = firebase.auth();
+<script type="module">
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+
+const SUPABASE_URL = 'https://weltiwdyqifibelauxxp.supabase.co';
+const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6IndlbHRpd2R5cWlmaWJlbGF1eHhwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk5MDM4ODcsImV4cCI6MjA5NTQ3OTg4N30.loeHeWp68F956RSdgkjRLuLeEdfNnykKVIrnIT2ygxE';
+const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
 var params = new URLSearchParams(window.location.search);
 var mode = params.get('mode');
 var sessionId = params.get('session') || null;
@@ -103,8 +96,9 @@ var orders = [];
 var activeTab = 'orders';
 var selectedTip = 20;
 var selectedPayMethod = 'Zelle';
-var unsubscribe = null;
-var unsubscribeDashboard = null;
+var dashboardChannel = null;
+var dinnerChannel = null;
+var eaterChannel = null;
 var lastResults = null;
 var paidStatus = {};
 var tipAlreadyIncluded = false;
@@ -116,12 +110,85 @@ var currentUser = null;
 var menuItems = []; // receipt items scanned by host, expanded by qty
 var receiptData = { subtotal: 0, tax: 0, tip: 0, fees: [], confirmed: false };
 
+function round2(n) { return Math.round(n * 100) / 100; }
+
+function userDisplay(u) {
+  if (!u) return '';
+  var meta = u.user_metadata || {};
+  return meta.full_name || meta.name || u.email || '';
+}
+
+function normalizeDinner(d) {
+  if (!d) return null;
+  return {
+    id: d.id,
+    restaurant: d.restaurant,
+    date: d.date,
+    hostName: d.host_name,
+    payMethod: d.pay_method,
+    payHandle: d.pay_handle,
+    menuItems: d.menu_items || [],
+    receiptData: d.receipt_data || { subtotal: 0, tax: 0, tip: 0, fees: [], confirmed: false },
+    orderCount: d.order_count || 0,
+    createdAt: d.created_at
+  };
+}
+
+function normalizeOrder(o) {
+  return {
+    name: o.eater_name,
+    items: (o.order_items || []).map(function(i){ return { name: i.name, price: parseFloat(i.price) }; }),
+    subtotal: parseFloat(o.subtotal) || 0,
+    isHost: !!o.is_host,
+    finalOwes: o.final_owes != null ? parseFloat(o.final_owes) : undefined,
+    taxShare: o.tax_share != null ? parseFloat(o.tax_share) : undefined,
+    tipShare: o.tip_share != null ? parseFloat(o.tip_share) : undefined,
+    tipPct: o.tip_pct != null ? parseFloat(o.tip_pct) : undefined,
+    submittedAt: o.submitted_at
+  };
+}
+
+async function fetchDinnerRaw(id) {
+  var res = await supabase.from('dinners').select('*').eq('id', id).maybeSingle();
+  if (res.error) { console.error(res.error); return null; }
+  return res.data;
+}
+
+async function fetchOrdersForDinner(id) {
+  var res = await supabase
+    .from('orders')
+    .select('id, eater_name, subtotal, is_host, submitted_at, final_owes, tax_share, tip_share, tip_pct, order_items(name, price)')
+    .eq('dinner_id', id)
+    .order('submitted_at', { ascending: true });
+  if (res.error) { console.error(res.error); return []; }
+  return (res.data || []).map(normalizeOrder);
+}
+
+async function removeChannelSafe(ch) {
+  if (!ch) return;
+  try { await supabase.removeChannel(ch); } catch (e) {}
+}
+
 // ── ROUTING ──────────────────────────────────────────────
 // Eaters don't need auth - route them directly
 if (mode === 'eater' && sessionId) {
   showEaterView();
 } else {
-  // Host flows require auth
+  renderSignInScreen();
+  supabase.auth.onAuthStateChange(function(event, session) {
+    if (session && session.user) {
+      currentUser = session.user;
+      document.getElementById('header-sub').textContent = userDisplay(currentUser);
+      if (mode === 'host' && sessionId) showHostDinner();
+      else showHostDashboard();
+    } else if (event === 'SIGNED_OUT') {
+      currentUser = null;
+      window.location.href = window.location.pathname;
+    }
+  });
+}
+
+function renderSignInScreen() {
   document.getElementById('app').innerHTML =
     '<div style="text-align:center;padding:60px 20px;">' +
     '<div style="font-size:32px;margin-bottom:12px;">🍽️</div>' +
@@ -131,62 +198,76 @@ if (mode === 'eater' && sessionId) {
     '<svg width="18" height="18" viewBox="0 0 24 24"><path fill="#fff" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/><path fill="#fff" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#fff" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l3.66-2.84z"/><path fill="#fff" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/></svg>' +
     'Sign in with Google</button>' +
     '</div>';
-
-  auth.onAuthStateChanged(function(user) {
-    if (user) {
-      currentUser = user;
-      // Update header with user info
-      document.getElementById('header-sub').textContent = user.displayName || user.email;
-      if (mode === 'host' && sessionId) showHostDinner();
-      else showHostDashboard();
-    }
-  });
 }
 
-function signInWithGoogle() {
-  var provider = new firebase.auth.GoogleAuthProvider();
-  auth.signInWithPopup(provider).catch(function(e) {
-    alert('Sign in failed: ' + e.message);
+async function signInWithGoogle() {
+  var redirectTo = window.location.origin + window.location.pathname;
+  var res = await supabase.auth.signInWithOAuth({
+    provider: 'google',
+    options: { redirectTo: redirectTo }
   });
+  if (res.error) alert('Sign in failed: ' + res.error.message);
 }
 
-function signOut() {
-  auth.signOut().then(function() {
-    currentUser = null;
-    window.location.href = window.location.pathname;
-  });
+async function signOut() {
+  await removeChannelSafe(dashboardChannel); dashboardChannel = null;
+  await removeChannelSafe(dinnerChannel); dinnerChannel = null;
+  await removeChannelSafe(eaterChannel); eaterChannel = null;
+  await supabase.auth.signOut();
+  currentUser = null;
+  window.location.href = window.location.pathname;
 }
 
 // ── HOST DASHBOARD ───────────────────────────────────────
-function showHostDashboard() {
-  if (unsubscribe) { unsubscribe(); unsubscribe = null; }
+async function showHostDashboard() {
+  await removeChannelSafe(dinnerChannel); dinnerChannel = null;
   setRole('host');
   document.getElementById('header-sub').textContent = 'No more Venmo math';
   document.getElementById('app').innerHTML = '<div class="empty-state">Loading...</div>';
-  unsubscribeDashboard = db.collection('dinners').orderBy('createdAt','desc').onSnapshot(function(snap) {
-    var dinners = snap.docs.map(function(d){ return Object.assign({id:d.id}, d.data()); });
-    var listHtml = dinners.length === 0
-      ? '<div class="empty-state">No dinners yet. Create your first one.</div>'
-      : dinners.map(function(d){
-          return '<div class="dinner-item">' +
-            '<div style="flex:1;cursor:pointer" onclick="goToHostDinner(\'' + d.id + '\')">' +
-            '<div class="dinner-name">' + d.restaurant + '</div>' +
-            '<div class="dinner-meta">' + formatDate(d.date) + ' · ' + (d.orderCount||0) + ' orders</div></div>' +
-            '<div style="display:flex;align-items:center;gap:12px;">' +
-            '<button onclick="deleteDinner(\'' + d.id + '\')" style="background:none;border:none;cursor:pointer;padding:8px;display:flex;align-items:center;justify-content:center;" title="Delete">' +
-            '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#c0522a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3,6 5,6 21,6"></polyline><path d="M19,6l-1,14a2,2,0,0,1-2,2H8a2,2,0,0,1-2-2L5,6"></path><path d="M10,11v6"></path><path d="M14,11v6"></path><path d="M9,6V4a1,1,0,0,1,1-1h4a1,1,0,0,1,1,1V6"></path></svg>' +
-            '</button>' +
-            '<div style="font-size:20px;color:#c8963e;cursor:pointer" onclick="goToHostDinner(\'' + d.id + '\')" >›</div>' +
-            '</div></div>';
-        }).join('');
-    var userName = currentUser ? currentUser.displayName || currentUser.email : '';
-    document.getElementById('app').innerHTML =
-      '<div style="display:flex;gap:8px;margin-bottom:14px;">' +
-        '<button class="new-dinner-btn" style="flex:1;margin-bottom:0;" onclick="showNewDinnerForm()">+ New Dinner</button>' +
-        '<button onclick="signOut()" style="padding:13px 16px;border:1.5px solid #e0d8c8;border-radius:11px;background:#fff;font-size:13px;color:#8a7e6e;cursor:pointer;white-space:nowrap;">Sign Out</button>' +
-      '</div>' +
-      '<div class="card"><div class="card-title">Your Dinners</div>' + listHtml + '</div>';
-  });
+
+  await refreshDashboard();
+
+  await removeChannelSafe(dashboardChannel);
+  dashboardChannel = supabase
+    .channel('dashboard-' + currentUser.id)
+    .on('postgres_changes', {
+      event: '*', schema: 'public', table: 'dinners',
+      filter: 'host_id=eq.' + currentUser.id
+    }, function() { refreshDashboard(); })
+    .subscribe();
+}
+
+async function refreshDashboard() {
+  var res = await supabase
+    .from('dinners')
+    .select('id, restaurant, date, order_count, created_at')
+    .eq('host_id', currentUser.id)
+    .order('created_at', { ascending: false });
+  if (res.error) { console.error(res.error); return; }
+  renderDashboardList(res.data || []);
+}
+
+function renderDashboardList(dinners) {
+  var listHtml = dinners.length === 0
+    ? '<div class="empty-state">No dinners yet. Create your first one.</div>'
+    : dinners.map(function(d){
+        return '<div class="dinner-item">' +
+          '<div style="flex:1;cursor:pointer" onclick="goToHostDinner(\'' + d.id + '\')">' +
+          '<div class="dinner-name">' + d.restaurant + '</div>' +
+          '<div class="dinner-meta">' + formatDate(d.date) + ' · ' + (d.order_count||0) + ' orders</div></div>' +
+          '<div style="display:flex;align-items:center;gap:12px;">' +
+          '<button onclick="deleteDinner(\'' + d.id + '\')" style="background:none;border:none;cursor:pointer;padding:8px;display:flex;align-items:center;justify-content:center;" title="Delete">' +
+          '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#c0522a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3,6 5,6 21,6"></polyline><path d="M19,6l-1,14a2,2,0,0,1-2,2H8a2,2,0,0,1-2-2L5,6"></path><path d="M10,11v6"></path><path d="M14,11v6"></path><path d="M9,6V4a1,1,0,0,1,1-1h4a1,1,0,0,1,1,1V6"></path></svg>' +
+          '</button>' +
+          '<div style="font-size:20px;color:#c8963e;cursor:pointer" onclick="goToHostDinner(\'' + d.id + '\')" >›</div>' +
+          '</div></div>';
+      }).join('');
+  document.getElementById('app').innerHTML =
+    '<div style="display:flex;gap:8px;margin-bottom:14px;">' +
+      '<button class="new-dinner-btn" style="flex:1;margin-bottom:0;" onclick="showNewDinnerForm()">+ New Dinner</button>' +
+      '<button onclick="signOut()" style="padding:13px 16px;border:1.5px solid #e0d8c8;border-radius:11px;background:#fff;font-size:13px;color:#8a7e6e;cursor:pointer;white-space:nowrap;">Sign Out</button>' +
+    '</div>' +
+    '<div class="card"><div class="card-title">Your Dinners</div>' + listHtml + '</div>';
 }
 
 function showNewDinnerForm() {
@@ -220,34 +301,34 @@ function selectPay(method) {
   });
 }
 
-function createDinner() {
+async function createDinner() {
   var hostName = document.getElementById('host-name-create').value.trim();
   var name = document.getElementById('rest-name').value.trim();
   var date = document.getElementById('rest-date').value;
   var handle = document.getElementById('pay-handle').value.trim();
   if (!hostName) { alert('Enter your name'); return; }
   if (!name) { alert('Enter a restaurant name'); return; }
-  db.collection('dinners').add({
-    restaurant: name, date: date,
-    hostName: hostName,
-    payMethod: selectedPayMethod, payHandle: handle,
-    createdAt: firebase.firestore.FieldValue.serverTimestamp(),
-    orderCount: 0
-  }).then(function(ref) { goToHostDinner(ref.id); });
+  var res = await supabase.from('dinners').insert({
+    host_id: currentUser.id,
+    restaurant: name,
+    name: name,
+    date: date,
+    host_name: hostName,
+    pay_method: selectedPayMethod,
+    pay_handle: handle
+  }).select('id').single();
+  if (res.error) { alert('Error: ' + res.error.message); return; }
+  goToHostDinner(res.data.id);
 }
 
-function deleteDinner(id) {
+async function deleteDinner(id) {
   if (!confirm('Delete this dinner? This cannot be undone.')) return;
-  db.collection('dinners').doc(id).collection('orders').get().then(function(snap) {
-    var batch = db.batch();
-    snap.docs.forEach(function(d){ batch.delete(d.ref); });
-    batch.delete(db.collection('dinners').doc(id));
-    return batch.commit();
-  });
+  var res = await supabase.from('dinners').delete().eq('id', id);
+  if (res.error) alert('Error: ' + res.error.message);
 }
 
 function goToHostDinner(id) {
-  if (unsubscribeDashboard) { unsubscribeDashboard(); unsubscribeDashboard = null; }
+  removeChannelSafe(dashboardChannel); dashboardChannel = null;
   // Reset receipt state for new dinner
   menuItems = [];
   receiptData = { subtotal: 0, tax: 0, tip: 0, fees: [], confirmed: false };
@@ -260,38 +341,37 @@ function goToHostDinner(id) {
 }
 
 // ── HOST DINNER VIEW ─────────────────────────────────────
-function showHostDinner() {
+async function showHostDinner() {
   setRole('host');
-  if (unsubscribe) { unsubscribe(); unsubscribe = null; }
-  db.collection('dinners').doc(sessionId).get().then(function(doc) {
-    if (!doc.exists) { showHostDashboard(); return; }
-    var dinner = doc.data();
-    document.getElementById('header-sub').textContent = dinner.restaurant + ' · ' + formatDate(dinner.date);
-    window._dinnerHostName = dinner.hostName || '';
-    if (dinner.receiptData) receiptData = dinner.receiptData;
-    if (dinner.menuItems) menuItems = dinner.menuItems;
-    var eaterUrl = window.location.origin + window.location.pathname + '?mode=eater&session=' + sessionId;
-    var html = '';
-    html += '<button class="back-btn" onclick="showHostDashboard()">‹ All Dinners</button>';
-    html += '<div class="card" style="border-left:4px solid #c8963e;">';
-    html += '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">';
-    html += '<div><div style="font-size:18px;font-weight:700;">' + dinner.restaurant + '</div>';
-    html += '<div style="font-size:13px;color:#8a7e6e;">' + formatDate(dinner.date) + ' · ' + (dinner.payMethod||'Zelle') + (dinner.payHandle?' @'+dinner.payHandle:'') + '</div></div>';
-    html += '<div style="display:flex;align-items:center;gap:8px;">';
-    html += '<div style="font-size:11px;font-weight:700;background:#1a1208;color:#fff;padding:5px 12px;border-radius:20px;">HOST</div>';
-    html += '</div>';
-    html += '</div>';
-    html += '</div>';
-    html += '<div class="tabs">';
-    html += '<button class="tab active" id="tab-scan" onclick="switchTab(&quot;scan&quot;)">1. Scan Receipt</button>';
-    html += '<button class="tab" id="tab-orders" onclick="switchTab(&quot;orders&quot;)">2. Blast & Claim</button>';
-    html += '<button class="tab" id="tab-pay" onclick="switchTab(&quot;pay&quot;)">3. Calculate & Pay</button>';
-    html += '</div>';
-    html += '<div id="tab-content"></div>';
-    document.getElementById('app').innerHTML = html;
-    listenOrders();
-    renderScanTab();
-  });
+  await removeChannelSafe(dinnerChannel); dinnerChannel = null;
+  var raw = await fetchDinnerRaw(sessionId);
+  if (!raw) { showHostDashboard(); return; }
+  var dinner = normalizeDinner(raw);
+  document.getElementById('header-sub').textContent = dinner.restaurant + ' · ' + formatDate(dinner.date);
+  window._dinnerHostName = dinner.hostName || '';
+  receiptData = dinner.receiptData;
+  menuItems = dinner.menuItems;
+  var eaterUrl = window.location.origin + window.location.pathname + '?mode=eater&session=' + sessionId;
+  var html = '';
+  html += '<button class="back-btn" onclick="showHostDashboard()">‹ All Dinners</button>';
+  html += '<div class="card" style="border-left:4px solid #c8963e;">';
+  html += '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">';
+  html += '<div><div style="font-size:18px;font-weight:700;">' + dinner.restaurant + '</div>';
+  html += '<div style="font-size:13px;color:#8a7e6e;">' + formatDate(dinner.date) + ' · ' + (dinner.payMethod||'Zelle') + (dinner.payHandle?' @'+dinner.payHandle:'') + '</div></div>';
+  html += '<div style="display:flex;align-items:center;gap:8px;">';
+  html += '<div style="font-size:11px;font-weight:700;background:#1a1208;color:#fff;padding:5px 12px;border-radius:20px;">HOST</div>';
+  html += '</div>';
+  html += '</div>';
+  html += '</div>';
+  html += '<div class="tabs">';
+  html += '<button class="tab active" id="tab-scan" onclick="switchTab(&quot;scan&quot;)">1. Scan Receipt</button>';
+  html += '<button class="tab" id="tab-orders" onclick="switchTab(&quot;orders&quot;)">2. Blast & Claim</button>';
+  html += '<button class="tab" id="tab-pay" onclick="switchTab(&quot;pay&quot;)">3. Calculate & Pay</button>';
+  html += '</div>';
+  html += '<div id="tab-content"></div>';
+  document.getElementById('app').innerHTML = html;
+  listenOrders();
+  renderScanTab();
 }
 
 function copyEaterLink() {
@@ -304,20 +384,40 @@ function copyEaterLink() {
 }
 
 function listenOrders() {
-  unsubscribe = db.collection('dinners').doc(sessionId).collection('orders')
-    .onSnapshot(function(snap) {
-      orders = snap.docs.map(function(d){ return d.data(); });
-      db.collection('dinners').doc(sessionId).update({ orderCount: orders.length });
-      var tab = activeTab;
-      if (tab === 'orders') {
-        // Only re-render orders list, not the host form
-        if (document.getElementById('orders-list-container')) {
-          renderOrdersList();
-        } else {
-          renderOrdersTab();
-        }
-      } else if (tab === 'paid') renderPaidTab();
-    });
+  removeChannelSafe(dinnerChannel);
+  dinnerChannel = supabase
+    .channel('dinner-' + sessionId)
+    .on('postgres_changes', {
+      event: '*', schema: 'public', table: 'orders',
+      filter: 'dinner_id=eq.' + sessionId
+    }, function() { refreshOrders(); })
+    .on('postgres_changes', {
+      event: '*', schema: 'public', table: 'order_items'
+    }, function() { refreshOrders(); })
+    .on('postgres_changes', {
+      event: 'UPDATE', schema: 'public', table: 'dinners',
+      filter: 'id=eq.' + sessionId
+    }, function(payload) {
+      if (payload && payload.new) {
+        if (payload.new.menu_items) menuItems = payload.new.menu_items;
+        if (payload.new.receipt_data) receiptData = payload.new.receipt_data;
+        if (activeTab === 'orders' && document.getElementById('orders-list-container')) renderOrdersList();
+      }
+    })
+    .subscribe();
+  refreshOrders();
+}
+
+async function refreshOrders() {
+  orders = await fetchOrdersForDinner(sessionId);
+  var tab = activeTab;
+  if (tab === 'orders') {
+    if (document.getElementById('orders-list-container')) {
+      renderOrdersList();
+    } else {
+      renderOrdersTab();
+    }
+  } else if (tab === 'paid') renderPaidTab();
 }
 
 function switchTab(tab) {
@@ -436,41 +536,40 @@ function updateHostClaimTotal() {
   if (el) el.textContent = '$' + total.toFixed(2);
 }
 
-function saveHostClaims() {
+async function saveHostClaims() {
   var name = window._dinnerHostName;
   if (!name) { alert('Set your host name when creating the dinner'); return; }
-  var items = []; var subtotal = 0;
+  var items = []; var subtotal = 0; var indices = [];
   document.querySelectorAll('.host-claim-row').forEach(function(el) {
     if (el.style.background === 'rgb(253, 246, 235)' || el.style.background === '#fdf6eb') {
       items.push({ name: el.dataset.name, price: parseFloat(el.dataset.price) });
       subtotal += parseFloat(el.dataset.price) || 0;
+      indices.push(parseInt(el.dataset.idx));
     }
   });
   if (items.length === 0) { alert('Select at least one item'); return; }
 
-  // Update claimedBy in menuItems
-  var updatedMenu = menuItems.map(function(item, idx) {
-    var el = document.getElementById('hclaim-' + idx);
-    if (el && (el.style.background === 'rgb(253, 246, 235)' || el.style.background === '#fdf6eb')) {
-      return Object.assign({}, item, { claimedBy: name });
-    }
-    return item;
-  });
-
-  var batch = db.batch();
-  batch.set(db.collection('dinners').doc(sessionId).collection('orders').doc(name), {
-    name: name, items: items,
-    subtotal: Math.round(subtotal * 100) / 100,
-    isHost: true,
-    submittedAt: firebase.firestore.FieldValue.serverTimestamp()
-  });
-  batch.update(db.collection('dinners').doc(sessionId), { menuItems: updatedMenu });
-
-  batch.commit().then(function() {
-    menuItems = updatedMenu;
+  try {
+    var r1 = await supabase.rpc('upsert_order_with_items', {
+      p_dinner_id: sessionId, p_eater_name: name,
+      p_subtotal: round2(subtotal), p_is_host: true, p_items: items
+    });
+    if (r1.error) throw r1.error;
+    var r2 = await supabase.rpc('claim_menu_items', {
+      p_dinner_id: sessionId, p_eater_name: name, p_indices: indices
+    });
+    if (r2.error) throw r2.error;
+    // Local mirror of menuItems for instant UI feedback (realtime echo will reconcile)
+    menuItems = menuItems.map(function(item, idx) {
+      if (indices.indexOf(idx) >= 0) return Object.assign({}, item, { claimedBy: name });
+      if (item.claimedBy === name) { var c = Object.assign({}, item); delete c.claimedBy; return c; }
+      return item;
+    });
     alert('Your items saved!');
     renderOrdersTab();
-  }).catch(function(e) { alert('Error: ' + e.message); });
+  } catch (e) {
+    alert('Error: ' + (e.message || e));
+  }
 }
 
 function renderOrdersList() {
@@ -483,23 +582,19 @@ function renderOrdersList() {
   }
 
   var foodTotal = orders.reduce(function(s,o){ return s+(o.subtotal||0); },0);
-  // Check for unclaimed menu items
-  db.collection('dinners').doc(sessionId).get().then(function(doc) {
-    if (!doc.exists) return;
-    var dinner = doc.data();
-    if (dinner.menuItems && dinner.menuItems.length > 0) {
-      var unclaimed = dinner.menuItems.filter(function(i){ return !i.claimedBy; });
-      var el2 = document.getElementById('orders-list-container');
-      var warn = el2 ? el2.querySelector('.unclaimed-warning') : null;
-      if (unclaimed.length > 0) {
-        var warnHtml = '<div class="unclaimed-warning" style="padding:10px 14px;background:#faeeda;border-radius:10px;margin-bottom:10px;font-size:13px;color:#854f0b;">' +
-          '⚠ ' + unclaimed.length + ' item' + (unclaimed.length>1?'s':'') + ' unclaimed: ' +
-          unclaimed.map(function(i){ return i.name + ' ($' + parseFloat(i.price).toFixed(2) + ')'; }).join(', ') +
-          '</div>';
-        if (el2 && !warn) el2.insertAdjacentHTML('afterbegin', warnHtml);
-      }
+
+  // Unclaimed-item warning — uses local menuItems (kept in sync via realtime)
+  var warnHtml = '';
+  if (menuItems && menuItems.length > 0) {
+    var unclaimed = menuItems.filter(function(i){ return !i.claimedBy; });
+    if (unclaimed.length > 0) {
+      warnHtml = '<div class="unclaimed-warning" style="padding:10px 14px;background:#faeeda;border-radius:10px;margin-bottom:10px;font-size:13px;color:#854f0b;">' +
+        '⚠ ' + unclaimed.length + ' item' + (unclaimed.length>1?'s':'') + ' unclaimed: ' +
+        unclaimed.map(function(i){ return i.name + ' ($' + parseFloat(i.price).toFixed(2) + ')'; }).join(', ') +
+        '</div>';
     }
-  });
+  }
+
   var rows = orders.map(function(o){
     var badge = o.finalOwes
       ? '<span style="font-size:11px;background:#eaf3de;color:#3b6d11;padding:2px 7px;border-radius:10px;margin-left:6px;font-weight:600;">Notified $'+o.finalOwes.toFixed(2)+'</span>'
@@ -518,7 +613,7 @@ function renderOrdersList() {
       '</div>';
   }).join('');
 
-  el.innerHTML =
+  el.innerHTML = warnHtml +
     '<div class="card"><div class="status-bar"><span class="live-dot"></span>'+orders.length+' order'+(orders.length!==1?'s':'')+' received</div>' +
     rows +
     '<div style="margin-top:14px;padding-top:14px;border-top:2px solid #e8e0d0;display:flex;justify-content:space-between;">' +
@@ -527,13 +622,10 @@ function renderOrdersList() {
     '<button class="btn-danger" onclick="clearOrders()">Clear All Orders</button>';
 }
 
-function clearOrders() {
+async function clearOrders() {
   if (!confirm('Clear all orders? Cannot be undone.')) return;
-  db.collection('dinners').doc(sessionId).collection('orders').get().then(function(snap) {
-    var batch = db.batch();
-    snap.docs.forEach(function(d){ batch.delete(d.ref); });
-    batch.commit();
-  });
+  var res = await supabase.from('orders').delete().eq('dinner_id', sessionId);
+  if (res.error) alert('Error: ' + res.error.message);
 }
 
 function editOrderInline(name, isHost) {
@@ -574,7 +666,7 @@ function addEditItem() {
   list.appendChild(div);
 }
 
-function saveEditOrder(name, isHost) {
+async function saveEditOrder(name, isHost) {
   var rows = document.querySelectorAll('#edit-items-list .item-row');
   var items = []; var subtotal = 0;
   rows.forEach(function(row) {
@@ -585,18 +677,18 @@ function saveEditOrder(name, isHost) {
   if (items.length === 0) { alert('Add at least one item'); return; }
   var btn = document.querySelector('#orders-list-container .btn-primary');
   if (btn) { btn.disabled = true; btn.textContent = 'Saving...'; }
-  var docData = { name: name, items: items, subtotal: Math.round(subtotal*100)/100, submittedAt: firebase.firestore.FieldValue.serverTimestamp() };
-  if (isHost) docData.isHost = true;
-  db.collection('dinners').doc(sessionId).collection('orders').doc(name).set(docData)
-    .then(function() {
-      var status = document.getElementById('edit-save-status');
-      if (status) status.textContent = '✓ Saved!';
-      setTimeout(function() { renderOrdersList(); }, 600);
-    })
-    .catch(function(e) {
-      if (btn) { btn.disabled = false; btn.textContent = 'Save Changes'; }
-      alert('Error: ' + e.message);
-    });
+  var res = await supabase.rpc('upsert_order_with_items', {
+    p_dinner_id: sessionId, p_eater_name: name,
+    p_subtotal: round2(subtotal), p_is_host: !!isHost, p_items: items
+  });
+  if (res.error) {
+    if (btn) { btn.disabled = false; btn.textContent = 'Save Changes'; }
+    alert('Error: ' + res.error.message);
+    return;
+  }
+  var status = document.getElementById('edit-save-status');
+  if (status) status.textContent = '✓ Saved!';
+  setTimeout(function() { renderOrdersList(); }, 600);
 }
 
 function renderScanTab() {
@@ -797,7 +889,7 @@ function checkReceiptMatch() {
   }
 }
 
-function confirmReceiptTotals() {
+async function confirmReceiptTotals() {
   var subtotal = parseFloat((document.getElementById('r-subtotal')||{}).value) || 0;
   var tax = parseFloat((document.getElementById('r-tax')||{}).value) || 0;
   if (!subtotal) { alert('Enter the food subtotal first'); return; }
@@ -816,13 +908,12 @@ function confirmReceiptTotals() {
   receiptData.tip = tip;
   receiptData.confirmed = true;
 
-  // Save to Firestore
-  db.collection('dinners').doc(sessionId).update({
-    receiptData: receiptData,
-    menuItems: menuItems
-  }).then(function() {
-    renderScanTab();
-  });
+  var res = await supabase.from('dinners').update({
+    receipt_data: receiptData,
+    menu_items: menuItems
+  }).eq('id', sessionId);
+  if (res.error) { alert('Error: ' + res.error.message); return; }
+  renderScanTab();
 }
 
 // ── TAB 2: BLAST & CLAIM ─────────────────────────────────────────────
@@ -867,7 +958,7 @@ function renderOrdersTab() {
 }
 
 // ── TAB 3: CALCULATE & PAY ───────────────────────────────────────────
-function renderPayTab() {
+async function renderPayTab() {
   var el = document.getElementById('tab-content');
   if (!el) return;
 
@@ -876,15 +967,15 @@ function renderPayTab() {
     return;
   }
 
-  // Load receiptData from Firestore if not in memory
+  // Load receiptData from server if not in memory
   if (!receiptData.subtotal) {
-    db.collection('dinners').doc(sessionId).get().then(function(doc) {
-      if (doc.exists && doc.data().receiptData) {
-        receiptData = doc.data().receiptData;
-        if (doc.data().menuItems) menuItems = doc.data().menuItems;
-      }
-      renderPayTab();
-    });
+    var raw = await fetchDinnerRaw(sessionId);
+    if (raw) {
+      var d = normalizeDinner(raw);
+      receiptData = d.receiptData;
+      menuItems = d.menuItems;
+    }
+    renderPayTab();
     return;
   }
 
@@ -1088,7 +1179,7 @@ function addPersonItem(pid) {
   list.appendChild(row);
 }
 
-function saveAllOrders() {
+async function saveAllOrders() {
   var persons = document.querySelectorAll('#order-persons-list .card');
   if (persons.length === 0) { alert('Add at least one person'); return; }
   var toSave = [];
@@ -1105,27 +1196,29 @@ function saveAllOrders() {
       if (n || pr) { items.push({ name: n||'Item', price: pr }); subtotal += pr; }
     });
     if (items.length === 0) { alert('Add at least one item for ' + name); valid = false; return; }
-    toSave.push({ name: name, items: items, subtotal: Math.round(subtotal*100)/100, isHost: isHost });
+    toSave.push({ name: name, items: items, subtotal: round2(subtotal), isHost: isHost });
   });
   if (!valid) return;
   var status = document.getElementById('add-order-status');
   if (status) status.textContent = 'Saving...';
-  var batch = db.batch();
-  toSave.forEach(function(o) {
-    var docData = { name: o.name, items: o.items, subtotal: o.subtotal, submittedAt: firebase.firestore.FieldValue.serverTimestamp() };
-    if (o.isHost) docData.isHost = true;
-    batch.set(db.collection('dinners').doc(sessionId).collection('orders').doc(o.name), docData);
-  });
-  batch.commit().then(function() {
+  try {
+    var results = await Promise.all(toSave.map(function(o) {
+      return supabase.rpc('upsert_order_with_items', {
+        p_dinner_id: sessionId, p_eater_name: o.name,
+        p_subtotal: o.subtotal, p_is_host: !!o.isHost, p_items: o.items
+      });
+    }));
+    var firstError = results.find(function(r){ return r.error; });
+    if (firstError) throw firstError.error;
     if (status) status.textContent = '✓ All orders saved!';
     setTimeout(function(){ if (status) status.textContent = ''; }, 2500);
     personCount = 0;
     var list = document.getElementById('order-persons-list');
     if (list) list.innerHTML = '';
     addPersonEntry();
-  }).catch(function(e) {
-    if (status) status.textContent = 'Error: ' + e.message;
-  });
+  } catch (e) {
+    if (status) status.textContent = 'Error: ' + (e.message || e);
+  }
 }
 
 function addOrderItem() { }
@@ -1270,7 +1363,7 @@ function addMenuItem() {
   list.appendChild(div);
 }
 
-function sendMenuToEaters() {
+async function sendMenuToEaters() {
   // Collect confirmed items from the edit fields
   var rows = document.querySelectorAll('.menu-item-row');
   var confirmedItems = [];
@@ -1287,18 +1380,19 @@ function sendMenuToEaters() {
   var status = document.getElementById('send-menu-status');
   if (status) status.textContent = 'Sending...';
 
-  db.collection('dinners').doc(sessionId).update({
-    menuItems: confirmedItems,
-    menuSentAt: firebase.firestore.FieldValue.serverTimestamp()
-  }).then(function() {
-    menuItems = confirmedItems;
-    if (status) status.innerHTML = '<span style="color:#5a7a5e;">✓ Menu sent! Eaters will see items to claim when they open their link.</span>';
-  }).catch(function(e) {
-    if (status) status.textContent = 'Error: ' + e.message;
-  });
+  var res = await supabase.from('dinners').update({
+    menu_items: confirmedItems,
+    menu_sent_at: new Date().toISOString()
+  }).eq('id', sessionId);
+  if (res.error) {
+    if (status) status.textContent = 'Error: ' + res.error.message;
+    return;
+  }
+  menuItems = confirmedItems;
+  if (status) status.innerHTML = '<span style="color:#5a7a5e;">✓ Menu sent! Eaters will see items to claim when they open their link.</span>';
 }
 
-function applyItemAssignment() {
+async function applyItemAssignment() {
   var selects = document.querySelectorAll('.item-assign');
   var assignments = {};
   selects.forEach(function(sel) {
@@ -1313,28 +1407,23 @@ function applyItemAssignment() {
     return;
   }
 
-  var batch = db.batch();
-  Object.keys(assignments).forEach(function(person) {
-    var existingOrder = orders.find(function(o){ return o.name === person; });
-    var existingItems = existingOrder ? existingOrder.items.slice() : [];
-    var newItems = existingItems.concat(assignments[person]);
-    var subtotal = newItems.reduce(function(s,i){ return s + i.price; }, 0);
-    var docData = {
-      name: person,
-      items: newItems,
-      subtotal: Math.round(subtotal * 100) / 100,
-      submittedAt: firebase.firestore.FieldValue.serverTimestamp()
-    };
-    if (existingOrder && existingOrder.isHost) docData.isHost = true;
-    batch.set(db.collection('dinners').doc(sessionId).collection('orders').doc(person), docData);
-  });
-
-  batch.commit().then(function() {
+  try {
+    await Promise.all(Object.keys(assignments).map(function(person) {
+      var existingOrder = orders.find(function(o){ return o.name === person; });
+      var existingItems = existingOrder ? existingOrder.items.slice() : [];
+      var newItems = existingItems.concat(assignments[person]);
+      var subtotal = newItems.reduce(function(s,i){ return s + i.price; }, 0);
+      var isHost = existingOrder && existingOrder.isHost;
+      return supabase.rpc('upsert_order_with_items', {
+        p_dinner_id: sessionId, p_eater_name: person,
+        p_subtotal: round2(subtotal), p_is_host: !!isHost, p_items: newItems
+      });
+    }));
     var el = document.getElementById('scan-items-result');
     if (el) el.innerHTML = '<div style="padding:12px;background:#eaf3de;border-radius:10px;font-size:14px;color:#3b6d11;font-weight:500;">✓ Items assigned and orders updated!</div>';
-  }).catch(function(e) {
-    alert('Error: ' + e.message);
-  });
+  } catch (e) {
+    alert('Error: ' + (e.message || e));
+  }
 }
 
 function calculate() {
@@ -1438,32 +1527,42 @@ function recalculate() {
   renderSplitTab();
 }
 
-function notifyEaters() {
+async function notifyEaters() {
   if (!lastResults || lastResults.length === 0) { alert('Calculate the split first.'); return; }
   var btn = document.getElementById('notify-btn');
   if (btn) { btn.disabled = true; btn.textContent = 'Sending...'; }
-  var batch = db.batch();
-  lastResults.forEach(function(r) {
-    var docName = r.name.replace(' (you)', '');
-    var matchedOrder = orders.find(function(o){ return o.name === docName && o.isHost; });
-    if (matchedOrder) return;
-    batch.update(
-      db.collection('dinners').doc(sessionId).collection('orders').doc(docName),
-      {
-        finalOwes: Math.round(r.total * 100) / 100,
-        taxShare: Math.round(r.tax * 100) / 100,
-        tipShare: Math.round(r.tip * 100) / 100,
-        tipPct: r.tipPct || selectedTip
-      }
-    );
-  });
-  batch.commit().then(function() {
+  var updates = lastResults
+    .filter(function(r) {
+      var docName = r.name.replace(' (you)', '');
+      var matchedOrder = orders.find(function(o){ return o.name === docName && o.isHost; });
+      return !matchedOrder;
+    })
+    .map(function(r) {
+      return {
+        docName: r.name.replace(' (you)', ''),
+        final_owes: round2(r.total),
+        tax_share: round2(r.tax),
+        tip_share: round2(r.tip),
+        tip_pct: r.tipPct || selectedTip
+      };
+    });
+  try {
+    var results = await Promise.all(updates.map(function(u) {
+      return supabase.from('orders').update({
+        final_owes: u.final_owes,
+        tax_share: u.tax_share,
+        tip_share: u.tip_share,
+        tip_pct: u.tip_pct
+      }).eq('dinner_id', sessionId).eq('eater_name', u.docName);
+    }));
+    var firstError = results.find(function(r){ return r.error; });
+    if (firstError) throw firstError.error;
     totalsSent = true;
     renderSplitResults();
-  }).catch(function(e) {
+  } catch (e) {
     if (btn) { btn.disabled = false; btn.textContent = 'Send Totals to Eaters →'; }
-    alert('Error sending totals: ' + e.message);
-  });
+    alert('Error sending totals: ' + (e.message || e));
+  }
 }
 // ── WHO PAID TAB ─────────────────────────────────────────
 function renderPaidTab() {
@@ -1548,40 +1647,44 @@ function togglePaid(name) {
 }
 
 // ── EATER VIEW ───────────────────────────────────────────
-function editOrder() {
+async function editOrder() {
   var name = localStorage.getItem('eater-name-' + sessionId);
   if (!name) { showEaterView(); return; }
-  // Load existing order and pre-fill form
-  db.collection('dinners').doc(sessionId).get().then(function(dDoc) {
-    var dinner = dDoc.data();
-    db.collection('dinners').doc(sessionId).collection('orders').doc(name).get().then(function(oDoc) {
-      var existingItems = oDoc.exists ? oDoc.data().items : [];
-      renderEaterForm(dinner, name, existingItems);
-    });
-  });
+  var raw = await fetchDinnerRaw(sessionId);
+  if (!raw) return;
+  var dinner = normalizeDinner(raw);
+  var res = await supabase
+    .from('orders')
+    .select('order_items(name, price)')
+    .eq('dinner_id', sessionId).eq('eater_name', name)
+    .maybeSingle();
+  var existingItems = (res && res.data && res.data.order_items)
+    ? res.data.order_items.map(function(i){ return { name: i.name, price: parseFloat(i.price) }; })
+    : [];
+  renderEaterForm(dinner, name, existingItems);
 }
 
-function showEaterView() {
+async function showEaterView() {
   // Kill any host listeners
-  if (unsubscribe) { unsubscribe(); unsubscribe = null; }
+  await removeChannelSafe(dinnerChannel); dinnerChannel = null;
+  await removeChannelSafe(dashboardChannel); dashboardChannel = null;
   setRole('eater');
-  db.collection('dinners').doc(sessionId).get().then(function(doc) {
-    if (!doc.exists) {
-      document.getElementById('app').innerHTML = '<div class="card"><p style="color:#c0522a;padding:20px;text-align:center;">Dinner not found. Ask the host for the correct link.</p></div>';
-      return;
-    }
-    var dinner = doc.data();
-    document.getElementById('header-sub').textContent = dinner.restaurant + ' · ' + formatDate(dinner.date);
-    window._dinnerHostName = dinner.hostName || '';
-    if (dinner.receiptData) receiptData = dinner.receiptData;
-    if (dinner.menuItems) menuItems = dinner.menuItems;
-    var savedName = localStorage.getItem('eater-name-' + sessionId);
-    if (savedName) {
-      checkEaterStatus(savedName, dinner);
-    } else {
-      renderEaterForm(dinner);
-    }
-  });
+  var raw = await fetchDinnerRaw(sessionId);
+  if (!raw) {
+    document.getElementById('app').innerHTML = '<div class="card"><p style="color:#c0522a;padding:20px;text-align:center;">Dinner not found. Ask the host for the correct link.</p></div>';
+    return;
+  }
+  var dinner = normalizeDinner(raw);
+  document.getElementById('header-sub').textContent = dinner.restaurant + ' · ' + formatDate(dinner.date);
+  window._dinnerHostName = dinner.hostName || '';
+  receiptData = dinner.receiptData;
+  menuItems = dinner.menuItems;
+  var savedName = localStorage.getItem('eater-name-' + sessionId);
+  if (savedName) {
+    checkEaterStatus(savedName, dinner);
+  } else {
+    renderEaterForm(dinner);
+  }
 }
 
 function renderEaterForm(dinner, prefillName, prefillItems) {
@@ -1678,16 +1781,28 @@ function updateClaimTotal() {
   if (el) el.textContent = '$' + total.toFixed(2);
 }
 
-function checkEaterStatus(name, dinner) {
-  db.collection('dinners').doc(sessionId).collection('orders').doc(name).get().then(function(doc) {
-    if (!doc.exists) {
-      renderEaterWaiting(name, { items: [], subtotal: 0 }, dinner);
-      return;
-    }
-    var data = doc.data();
-    if (data.finalOwes) renderEaterOwes(name, data, dinner);
-    else renderEaterWaiting(name, data, dinner);
-  });
+async function checkEaterStatus(name, dinner) {
+  var res = await supabase
+    .from('orders')
+    .select('id, subtotal, final_owes, tax_share, tip_share, tip_pct, order_items(name, price)')
+    .eq('dinner_id', sessionId).eq('eater_name', name)
+    .maybeSingle();
+  if (res.error) console.error(res.error);
+  if (!res.data) {
+    renderEaterWaiting(name, { items: [], subtotal: 0 }, dinner);
+    return;
+  }
+  var d = res.data;
+  var order = {
+    items: (d.order_items || []).map(function(i){ return { name: i.name, price: parseFloat(i.price) }; }),
+    subtotal: parseFloat(d.subtotal) || 0,
+    finalOwes: d.final_owes != null ? parseFloat(d.final_owes) : undefined,
+    taxShare: d.tax_share != null ? parseFloat(d.tax_share) : undefined,
+    tipShare: d.tip_share != null ? parseFloat(d.tip_share) : undefined,
+    tipPct: d.tip_pct != null ? parseFloat(d.tip_pct) : undefined
+  };
+  if (order.finalOwes) renderEaterOwes(name, order, dinner);
+  else renderEaterWaiting(name, order, dinner);
 }
 
 function renderEaterWaiting(name, data, dinner) {
@@ -1707,16 +1822,23 @@ function renderEaterWaiting(name, data, dinner) {
   html += '</div>';
   document.getElementById('app').innerHTML = html;
 
-  // Listen in real-time for finalOwes
-  var unsub = db.collection('dinners').doc(sessionId).collection('orders').doc(name)
-    .onSnapshot(function(doc) {
-      if (doc.exists && doc.data().finalOwes) {
-        unsub();
-        db.collection('dinners').doc(sessionId).get().then(function(dDoc) {
-          renderEaterOwes(name, doc.data(), dDoc.data());
-        });
+  // Listen in real-time for finalOwes (via UPDATE on this dinner's orders)
+  removeChannelSafe(eaterChannel);
+  eaterChannel = supabase
+    .channel('eater-' + sessionId + '-' + name)
+    .on('postgres_changes', {
+      event: 'UPDATE', schema: 'public', table: 'orders',
+      filter: 'dinner_id=eq.' + sessionId
+    }, async function(payload) {
+      if (payload && payload.new && payload.new.eater_name === name && payload.new.final_owes) {
+        await removeChannelSafe(eaterChannel);
+        eaterChannel = null;
+        var raw = await fetchDinnerRaw(sessionId);
+        var d = raw ? normalizeDinner(raw) : dinner;
+        await checkEaterStatus(name, d);
       }
-    });
+    })
+    .subscribe();
 }
 
 function renderEaterOwes(name, data, dinner) {
@@ -1759,40 +1881,27 @@ function removeItem(btn) {
   if (document.querySelectorAll('#items-list .item-row').length > 1) row.remove();
 }
 
-function submitOrder() {
+async function submitOrder() {
   var name = document.getElementById('guest-name').value.trim();
   if (!name) { alert('Please enter your name'); return; }
 
   var items = []; var subtotal = 0;
-
-  // Check if we're in menu claim mode
   var claimRows = document.querySelectorAll('.menu-claim-row');
-  if (claimRows.length > 0) {
+  var selectedIndices = [];
+  var isClaimMode = claimRows.length > 0;
+
+  if (isClaimMode) {
     claimRows.forEach(function(el) {
       if (el.style.background === 'rgb(253, 246, 235)' || el.style.background === '#fdf6eb') {
         var itemName = el.dataset.name;
         var price = parseFloat(el.dataset.price) || 0;
         items.push({ name: itemName, price: price });
         subtotal += price;
+        selectedIndices.push(parseInt(el.dataset.idx));
       }
     });
     if (items.length === 0) { alert('Tap at least one item you ordered'); return; }
-
-    // Update claimedBy on each item in Firestore
-    db.collection('dinners').doc(sessionId).get().then(function(doc) {
-      if (!doc.exists) return;
-      var dinner = doc.data();
-      var updatedMenu = (dinner.menuItems || []).map(function(item, idx) {
-        var claimEl = document.getElementById('claim-' + idx);
-        if (claimEl && (claimEl.style.background === 'rgb(253, 246, 235)' || claimEl.style.background === '#fdf6eb')) {
-          return Object.assign({}, item, { claimedBy: name });
-        }
-        return item;
-      });
-      return db.collection('dinners').doc(sessionId).update({ menuItems: updatedMenu });
-    });
   } else {
-    // Manual entry mode
     var rows = document.querySelectorAll('.item-row');
     rows.forEach(function(row) {
       var n = row.querySelector('.item-name').value.trim();
@@ -1801,24 +1910,31 @@ function submitOrder() {
     });
     if (items.length === 0) { alert('Add at least one item'); return; }
   }
+
   var btn = document.getElementById('submit-btn');
   if(btn){ btn.disabled = true; btn.textContent = 'Submitting...'; }
-  db.collection('dinners').doc(sessionId).collection('orders').doc(name).set({
-    name: name, items: items,
-    subtotal: Math.round(subtotal*100)/100,
-    submittedAt: firebase.firestore.FieldValue.serverTimestamp()
-  }).then(function() {
+
+  try {
+    var r1 = await supabase.rpc('upsert_order_with_items', {
+      p_dinner_id: sessionId, p_eater_name: name,
+      p_subtotal: round2(subtotal), p_is_host: false, p_items: items
+    });
+    if (r1.error) throw r1.error;
+    if (isClaimMode) {
+      var r2 = await supabase.rpc('claim_menu_items', {
+        p_dinner_id: sessionId, p_eater_name: name, p_indices: selectedIndices
+      });
+      if (r2.error) throw r2.error;
+    }
     localStorage.setItem('eater-name-' + sessionId, name);
     localStorage.setItem('last-eater-session', sessionId);
-    // Get dinner data and show waiting screen directly - no re-routing
-    db.collection('dinners').doc(sessionId).get().then(function(doc) {
-      var dinner = doc.exists ? doc.data() : { restaurant: '', date: '' };
-      renderEaterWaiting(name, { items: items, subtotal: subtotal }, dinner);
-    });
-  }).catch(function(e) {
-    alert('Error: ' + e.message);
+    var raw = await fetchDinnerRaw(sessionId);
+    var dinner = raw ? normalizeDinner(raw) : { restaurant: '', date: '', payMethod: '', payHandle: '' };
+    renderEaterWaiting(name, { items: items, subtotal: subtotal }, dinner);
+  } catch (e) {
+    alert('Error: ' + (e.message || e));
     if(btn){ btn.disabled = false; btn.textContent = 'Submit My Order'; }
-  });
+  }
 }
 
 function setRole(role) {
@@ -1834,6 +1950,30 @@ function formatDate(d) {
   var months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
   return months[parseInt(parts[1])-1] + ' ' + parseInt(parts[2]) + ', ' + parts[0];
 }
+
+// ── Expose handlers referenced by inline onclick attributes ──
+Object.assign(window, {
+  signInWithGoogle, signOut,
+  showHostDashboard, showNewDinnerForm, selectPay, createDinner, deleteDinner, goToHostDinner,
+  copyEaterLink, switchTab,
+  sendMenuToEaters, toggleHostClaim, saveHostClaims,
+  editOrderInline, removeItem, addEditItem, saveEditOrder,
+  renderOrdersList, clearOrders,
+  updateMenuItemName, updateMenuItemPrice, removeMenuItemByIdx,
+  setTipMode, setReceiptTip, updateTipFromPct,
+  addFee, updateFeeEl, updateFee, removeFee,
+  checkReceiptMatch, confirmReceiptTotals,
+  addPersonEntry, removePersonEntry, addPersonItem, saveAllOrders,
+  addOrderItem, removeOrderItem, autoSaveOrder, doSaveOrder,
+  addBehalfItem, saveBehalfOrder, addHostItemLive, saveHostMeal,
+  calculateFromClaims, doCalculate, finishCalculate,
+  calculate, recalculate, notifyEaters,
+  togglePaid,
+  editOrder, toggleClaim, addItem, submitOrder,
+  setTip, setTipIncluded,
+  addMenuItem, removeMenuItem, scanReceipt,
+  applyItemAssignment
+});
 </script>
 </body>
 </html>
