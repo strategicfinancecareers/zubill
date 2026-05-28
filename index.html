@@ -271,22 +271,32 @@ async function fetchDinnerRaw(id) {
   return res.data;
 }
 async function fetchOrdersForDinner(id) {
-  var res = await supabase
-    .from('orders')
-    .select('id, eater_name, subtotal, is_host, submitted_at, final_owes, tax_share, tip_share, tip_pct, order_items(name, price)')
-    .eq('dinner_id', id)
-    .order('submitted_at', { ascending: true });
-  if (res.error) { console.error(res.error); return []; }
-  return (res.data || []).map(normalizeOrder);
+  try {
+    var res = await supabase
+      .from('orders')
+      .select('id, eater_name, subtotal, is_host, submitted_at, final_owes, tax_share, tip_share, tip_pct, order_items(name, price)')
+      .eq('dinner_id', id)
+      .order('submitted_at', { ascending: true });
+    if (res.error) { console.warn('fetchOrders error:', res.error); return []; }
+    return (res.data || []).map(normalizeOrder);
+  } catch (e) {
+    console.warn('fetchOrders threw:', e);
+    return [];
+  }
 }
 async function fetchParticipants(id) {
-  var res = await supabase
-    .from('participants')
-    .select('id, name, joined_at, has_picked, picked_at')
-    .eq('dinner_id', id)
-    .order('joined_at', { ascending: true });
-  if (res.error) { console.error(res.error); return []; }
-  return res.data || [];
+  try {
+    var res = await supabase
+      .from('participants')
+      .select('id, name, joined_at, has_picked, picked_at')
+      .eq('dinner_id', id)
+      .order('joined_at', { ascending: true });
+    if (res.error) { console.warn('fetchParticipants error:', res.error); return []; }
+    return res.data || [];
+  } catch (e) {
+    console.warn('fetchParticipants threw:', e);
+    return [];
+  }
 }
 async function removeChannelSafe(ch) {
   if (!ch) return;
@@ -826,14 +836,22 @@ async function showHostDashboard() {
 }
 
 async function refreshDashboard() {
-  var res = await supabase
-    .from('dinners')
-    .select('id, restaurant, name, date, order_count, created_at, orders(final_owes)')
-    .eq('host_id', currentUser.id)
-    .order('created_at', { ascending: false });
-  if (res.error) { console.error(res.error); return; }
-  dashboardDinners = res.data || [];
-  renderTabHome(dashboardDinners);
+  var data = [];
+  try {
+    var res = await supabase
+      .from('dinners')
+      .select('id, restaurant, name, date, order_count, created_at, orders(final_owes)')
+      .eq('host_id', currentUser.id)
+      .order('created_at', { ascending: false });
+    if (res.error) { console.warn('refreshDashboard error:', res.error); }
+    else { data = res.data || []; }
+  } catch (e) {
+    console.warn('refreshDashboard threw:', e);
+  }
+  dashboardDinners = data;
+  // Always render — even on failure, so the user never hangs on Loading…
+  try { renderTabHome(dashboardDinners); }
+  catch (e) { console.error('renderTabHome threw:', e); }
 }
 
 function renderTabHome(dinners) {
@@ -1140,6 +1158,7 @@ function goToHostDinner(id) {
   lastResults = null;
   paidStatus = {};
   orders = [];
+  participants = [];
   hostSheet = null;
   totalsSent = false;
   pendingCalcData = null;
@@ -1163,12 +1182,20 @@ async function showHostDinner() {
   menuItems = currentDinner.menuItems || [];
   // Linear flow: send a fresh dinner straight to scan; confirmed → live claim view
   hostSheet = (receiptData && receiptData.confirmed) ? null : 'scan';
-  // Host is automatically a participant (idempotent)
+  // Host is automatically a participant (idempotent, best-effort)
   if (currentDinner.hostName) {
-    supabase.rpc('join_dinner', { p_dinner_id: sessionId, p_name: currentDinner.hostName }).catch(function() {});
+    try {
+      supabase.rpc('join_dinner', { p_dinner_id: sessionId, p_name: currentDinner.hostName })
+        .catch(function(e) { console.warn('join_dinner failed:', e); });
+    } catch (e) { /* swallow */ }
   }
+  // Render the current sheet immediately with whatever state we have so the
+  // loading placeholder never lingers if realtime/queries are slow.
+  try { renderHostSheetForCurrent(); }
+  catch (e) { console.error('initial render threw:', e); }
   listenOrders();
-  await refreshOrders();
+  // Best-effort live data top-up; refreshOrders is itself fail-soft now.
+  refreshOrders();
 }
 
 function listenOrders() {
@@ -1193,13 +1220,21 @@ function listenOrders() {
 }
 
 async function refreshOrders() {
-  var both = await Promise.all([
-    fetchOrdersForDinner(sessionId),
-    fetchParticipants(sessionId),
-  ]);
-  orders = both[0];
-  participants = both[1];
-  renderHostSheetForCurrent();
+  try {
+    var both = await Promise.all([
+      fetchOrdersForDinner(sessionId),
+      fetchParticipants(sessionId),
+    ]);
+    orders = both[0] || [];
+    participants = both[1] || [];
+  } catch (e) {
+    console.warn('refreshOrders rejected:', e);
+    orders = orders || [];
+    participants = participants || [];
+  }
+  // Render even on partial failure so the host never hangs on Loading…
+  try { renderHostSheetForCurrent(); }
+  catch (e) { console.error('renderHostSheetForCurrent threw:', e); }
 }
 
 function renderHostSheetForCurrent() {
