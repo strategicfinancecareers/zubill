@@ -176,6 +176,7 @@ var mode = params.get('mode');
 var sessionId = params.get('session') || null;
 var currentUser = null;
 var currentDinner = null;
+var dashboardDinners = [];
 var orders = [];
 var menuItems = [];
 var receiptData = { subtotal: 0, tax: 0, tip: 0, fees: [], confirmed: false };
@@ -422,24 +423,32 @@ function tickerLines() {
   });
   return lines;
 }
-function tickerEmptyHTML() {
-  return '<div style="background:'+T.paper+';border-radius:18px;padding:13px 16px;border:1px solid '+T.rule+
-    ';display:flex;align-items:center;gap:10px;color:'+T.inkSoft+';font-size:13px;font-weight:500;">' +
-    '<span style="font-size:16px;">👀</span> Waiting on the first claim…</div>';
-}
 function tickerHTML() {
-  var lines = tickerLines();
-  if (lines.length === 0) return tickerEmptyHTML();
-  return '<div id="tab-ticker" style="background:'+T.paper+';border-radius:18px;padding:12px 14px;' +
-    'display:flex;align-items:center;gap:12px;overflow:hidden;position:relative;border:1px solid '+T.rule+';">' +
-    '<div style="display:flex;align-items:center;gap:6px;flex-shrink:0;">' +
-      '<span style="width:6px;height:6px;border-radius:999px;background:'+T.tomato+
-      ';box-shadow:0 0 0 3px rgba(229,75,60,0.2);animation:tabPulse 1.6s ease-in-out infinite;"></span>' +
-      '<span style="font-size:9.5px;letter-spacing:1.4px;text-transform:uppercase;font-weight:700;color:'+T.tomato+';">Live</span>' +
-    '</div>' +
-    '<div style="width:1px;height:18px;background:'+T.rule+';flex-shrink:0;"></div>' +
-    '<div id="tab-ticker-content" style="display:flex;align-items:center;gap:8px;flex:1;min-width:0;overflow:hidden;"></div>' +
+  var picked = orders.map(function(o){ return o.name; });
+  var pickedCount = picked.length;
+  if (pickedCount === 0) {
+    return '<div style="background:'+T.paper+';border-radius:18px;padding:14px 16px;border:1px solid '+T.rule+
+      ';display:flex;align-items:center;gap:12px;color:'+T.inkSoft+';font-size:13.5px;font-weight:500;">' +
+      '<span style="font-size:20px;">👥</span>' +
+      '<span>Nobody’s picked yet — share the link 📎</span>' +
     '</div>';
+  }
+  var lines = tickerLines();
+  var hasTicker = lines.length > 0;
+  return '<div id="tab-ticker" style="background:'+T.paper+';border-radius:18px;padding:12px 14px;border:1px solid '+T.rule+';">' +
+    '<div style="display:flex;align-items:center;gap:10px;">' +
+      avatarStackHTML(picked, { size: 24, max: 5, ring: T.paper }) +
+      '<div style="font-size:13.5px;font-weight:600;color:'+T.ink+';flex:1;min-width:0;">' +
+        pickedCount + ' picked their items' +
+      '</div>' +
+      '<span style="width:7px;height:7px;border-radius:999px;background:'+T.tomato+
+      ';box-shadow:0 0 0 3px rgba(229,75,60,0.18);animation:tabPulse 1.6s ease-in-out infinite;flex-shrink:0;" aria-label="Live"></span>' +
+    '</div>' +
+    (hasTicker
+      ? '<div style="height:1px;background:'+T.rule+';margin:10px 0 8px;"></div>' +
+        '<div id="tab-ticker-content" style="display:flex;align-items:center;gap:8px;font-size:12.5px;color:'+T.inkSoft+';overflow:hidden;min-height:22px;"></div>'
+      : '') +
+  '</div>';
 }
 function stopTicker() {
   if (tickerTimer) { clearInterval(tickerTimer); tickerTimer = null; }
@@ -453,11 +462,11 @@ function startTicker() {
     var content = document.getElementById('tab-ticker-content');
     if (!content) { stopTicker(); return; }
     var item = lines[idx % lines.length];
-    content.innerHTML = '<div style="display:flex;align-items:center;gap:8px;animation:tickerSlide 0.45s ease-out;min-width:0;">' +
-      avatarHTML(item.who, { size: 22 }) +
-      '<div style="font-size:13px;font-weight:500;color:'+T.ink+';line-height:1.3;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' +
-        '<strong style="font-weight:700;">'+escapeHtml(item.who)+'</strong> '+escapeHtml(item.text)+
-        ' <span style="font-size:14px;">'+item.emoji+'</span>' +
+    content.innerHTML = '<div style="display:flex;align-items:center;gap:7px;animation:tickerSlide 0.45s ease-out;min-width:0;">' +
+      avatarHTML(item.who, { size: 18 }) +
+      '<div style="font-size:12.5px;font-weight:500;color:'+T.inkSoft+';line-height:1.3;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' +
+        '<strong style="font-weight:700;color:'+T.ink+';">'+escapeHtml(item.who)+'</strong> '+escapeHtml(item.text)+
+        ' <span style="font-size:13px;">'+item.emoji+'</span>' +
       '</div>' +
     '</div>';
     idx++;
@@ -732,7 +741,8 @@ async function refreshDashboard() {
     .eq('host_id', currentUser.id)
     .order('created_at', { ascending: false });
   if (res.error) { console.error(res.error); return; }
-  renderTabHome(res.data || []);
+  dashboardDinners = res.data || [];
+  renderTabHome(dashboardDinners);
 }
 
 function renderTabHome(dinners) {
@@ -977,10 +987,60 @@ async function createDinner() {
   if (res.error) { alert('Error: ' + res.error.message); return; }
   goToHostDinner(res.data.id);
 }
-async function deleteDinner(id) {
-  if (!confirm('Close this tab for good?')) return;
+function deleteDinner(id) {
+  var d = (dashboardDinners || []).find(function(x){ return x.id === id; });
+  showDeleteTabConfirm(id, d ? d.restaurant : null);
+}
+
+function showDeleteTabConfirm(id, restaurant) {
+  dismissDeleteTab();
+  var overlay = document.createElement('div');
+  overlay.className = 'tab-modal-overlay';
+  overlay.style.cssText =
+    'position:fixed;inset:0;background:rgba(42,22,16,0.55);z-index:200;' +
+    'display:flex;align-items:flex-end;justify-content:center;padding:20px;' +
+    'animation:tabFadeIn 180ms ease-out;';
+  overlay.onclick = function(e) { if (e.target === overlay) dismissDeleteTab(); };
+  var safeName = escapeHtml(restaurant || 'this tab');
+  overlay.innerHTML =
+    '<div role="dialog" aria-modal="true" style="background:#fff;border-radius:24px;padding:24px 22px 22px;max-width:420px;width:100%;' +
+      'box-shadow:0 24px 48px -16px rgba(42,22,16,0.45);animation:stageSwap 240ms cubic-bezier(0.2,0.7,0.2,1);">' +
+      '<div style="width:48px;height:48px;border-radius:16px;background:rgba(200,54,74,0.12);display:flex;align-items:center;justify-content:center;font-size:24px;margin-bottom:14px;">🗑️</div>' +
+      '<div style="font-family:'+T.sans+';font-size:24px;font-weight:700;letter-spacing:-0.6px;line-height:1.1;color:'+T.ink+';">Delete this tab?</div>' +
+      '<div style="margin-top:8px;font-size:14px;color:'+T.inkSoft+';font-weight:500;line-height:1.45;">' +
+        'This permanently removes <strong style="color:'+T.ink+';font-weight:700;">'+safeName+'</strong> and everyone’s picks. Can’t be undone.' +
+      '</div>' +
+      '<div style="display:flex;flex-direction:column;gap:10px;margin-top:22px;">' +
+        '<button onclick="confirmDeleteTab(\''+attr(id)+'\')" style="background:'+T.cherry+';color:#fff;border:none;border-radius:999px;padding:14px;font-size:14.5px;font-weight:700;cursor:pointer;letter-spacing:-0.1px;box-shadow:0 12px 24px -10px rgba(200,54,74,0.55);">Delete tab</button>' +
+        '<button onclick="dismissDeleteTab()" style="background:transparent;border:none;padding:12px;font-size:14px;font-weight:600;color:'+T.inkSoft+';cursor:pointer;">Cancel</button>' +
+      '</div>' +
+    '</div>';
+  document.body.appendChild(overlay);
+}
+
+function dismissDeleteTab() {
+  var els = document.querySelectorAll('.tab-modal-overlay');
+  els.forEach(function(el){ el.remove(); });
+}
+
+async function confirmDeleteTab(id) {
+  dismissDeleteTab();
+  // Optimistic remove + immediate re-render
+  var snapshot = dashboardDinners.slice();
+  var removedIdx = dashboardDinners.findIndex(function(d){ return d.id === id; });
+  if (removedIdx >= 0) {
+    dashboardDinners.splice(removedIdx, 1);
+    renderTabHome(dashboardDinners);
+  }
   var res = await supabase.from('dinners').delete().eq('id', id);
-  if (res.error) alert('Error: ' + res.error.message);
+  if (res.error) {
+    // Restore on failure
+    dashboardDinners = snapshot;
+    renderTabHome(dashboardDinners);
+    showToast('Delete failed — ' + (res.error.message || 'try again'));
+    return;
+  }
+  showToast('Tab deleted');
 }
 function goToHostDinner(id) {
   removeChannelSafe(dashboardChannel); dashboardChannel = null;
@@ -1099,11 +1159,8 @@ function renderHostClaim() {
     : 0;
 
   var rightHeader =
-    '<button class="tab-iconbtn" onclick="setHostSheet(\'scan\')" aria-label="Edit receipt" title="Edit receipt">' +
-      '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="'+T.ink+'" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>' +
-    '</button>' +
-    '<button class="tab-iconbtn" onclick="setHostSheet(\'share\')" aria-label="Re-share link" title="Re-share link">' +
-      '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="'+T.ink+'" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><line x1="14" y1="14" x2="14" y2="21"/><line x1="14" y1="14" x2="21" y2="14"/><line x1="17" y1="17" x2="17" y2="21"/><line x1="21" y1="17" x2="21" y2="21"/></svg>' +
+    '<button class="tab-iconbtn" onclick="setHostSheet(\'share\')" aria-label="Share tab" title="Share tab">' +
+      '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="'+T.ink+'" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>' +
     '</button>';
 
   var headerHTML = hostHeaderHTML({
@@ -1865,9 +1922,12 @@ function renderHostSettleSheet() {
   html +=
     '<div style="padding:0 22px 14px;">' +
       '<div class="tab-card">' +
-        '<div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:10px;">' +
-          '<div style="font-size:11px;font-weight:700;letter-spacing:0.6px;text-transform:uppercase;color:'+T.inkSoft+';">Grand total</div>' +
-          moneyHTML(grandTotal, { big: true, color: T.ink }) +
+        '<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px;gap:10px;">' +
+          '<div>' +
+            '<div style="font-size:11px;font-weight:700;letter-spacing:0.6px;text-transform:uppercase;color:'+T.inkSoft+';">Grand total</div>' +
+            '<div style="margin-top:4px;">'+moneyHTML(grandTotal, { big: true, color: T.ink })+'</div>' +
+          '</div>' +
+          '<button onclick="setHostSheet(\'scan\')" class="tab-ghost-btn" style="font-size:11.5px;font-weight:600;padding:6px 10px;border:1.5px solid '+T.rule+';border-radius:999px;color:'+T.inkSoft+';flex-shrink:0;">Edit receipt</button>' +
         '</div>' +
         '<div style="height:1px;background:'+T.rule+';margin:8px 0;"></div>' +
         '<div style="font-size:13px;color:'+T.inkSoft+';display:flex;flex-direction:column;gap:4px;">' +
@@ -2732,6 +2792,7 @@ Object.assign(window, {
   signInWithGoogle, signOut,
   // Dashboard / dinner CRUD
   showHostDashboard, showNewDinnerForm, selectPay, createDinner, deleteDinner, goToHostDinner,
+  showDeleteTabConfirm, dismissDeleteTab, confirmDeleteTab,
   // Host dinner navigation
   setHostSheet, renderHostClaim, copyEaterLink, shareEaterLink, clearOrders, toggleHostItemClaim,
   // Scan sheet
