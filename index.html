@@ -192,6 +192,7 @@ var paidStatus = {};
 var personCount = 0;
 var editItemCount = 0;
 var selectedPayMethod = 'Zelle';
+var foodExpanded = false; // host scan-review: food zone collapsed by default
 var eaterStage = null; // 'claiming' | 'waiting' | 'settled'
 var eaterCtx = {};
 var eaterFirstRender = true;
@@ -238,6 +239,11 @@ function whenLabel(createdAt, date) {
 }
 function normalizeDinner(d) {
   if (!d) return null;
+  var rd = d.receipt_data || { subtotal: 0, tax: 0, tip: 0, fees: [], confirmed: false };
+  // Fill new fields for older rows so the UI never sees `undefined`
+  if (rd.serviceFee   == null) rd.serviceFee   = 0;
+  if (rd.receiptTotal == null) rd.receiptTotal = 0;
+  if (!Array.isArray(rd.fees)) rd.fees = [];
   return {
     id: d.id,
     restaurant: d.restaurant,
@@ -247,7 +253,7 @@ function normalizeDinner(d) {
     payMethod: d.pay_method,
     payHandle: d.pay_handle,
     menuItems: d.menu_items || [],
-    receiptData: d.receipt_data || { subtotal: 0, tax: 0, tip: 0, fees: [], confirmed: false },
+    receiptData: rd,
     orderCount: d.order_count || 0,
     createdAt: d.created_at,
   };
@@ -689,38 +695,58 @@ function moneyInputHTML(id, value, opts) {
 
 function updateReceiptField(el) {
   var v = parseFloat(el.value) || 0;
-  if (el.id === 'r-tax')   receiptData.tax = v;
-  if (el.id === 'r-tip')   receiptData.tip = v;
-  if (el.id === 'r-total') receiptData.receiptTotal = v;
+  if (el.id === 'r-tax')      receiptData.tax          = v;
+  if (el.id === 'r-service')  receiptData.serviceFee   = v;
+  if (el.id === 'r-tip')      receiptData.tip          = v;
+  if (el.id === 'r-total')    receiptData.receiptTotal = v;
   refreshMatchBanner();
 }
 
 function matchBannerHTML() {
   var sub = (menuItems || []).reduce(function(s, m){ return s + (parseFloat(m.price)||0); }, 0);
   var tax = parseFloat(receiptData.tax) || 0;
+  var service = parseFloat(receiptData.serviceFee) || 0;
   var tip = parseFloat(receiptData.tip) || 0;
+  var customs = (receiptData.fees || []).reduce(function(s,f){ return s + (parseFloat(f.amount)||0); }, 0);
+  var ourSum = sub + tax + service + tip + customs;
   var printed = parseFloat(receiptData.receiptTotal) || 0;
   if (!printed) {
-    if (!sub && !tax && !tip) return '';
-    return '<div style="padding:10px 12px;background:'+T.paper+';border-radius:12px;font-size:12.5px;color:'+T.inkSoft+';font-weight:500;">' +
-      'No printed total to check against. Make sure items + tax + tip add up to what you paid.' +
-    '</div>';
+    if (!sub && !tax && !service && !tip && !customs) return '';
+    return '<div style="padding:12px 14px;background:'+T.paper+';border-radius:14px;font-size:12.5px;color:'+T.inkSoft+';font-weight:500;line-height:1.4;">Enter the receipt’s printed total above to reconcile.</div>';
   }
-  var sum = sub + tax + tip;
-  var diff = Math.abs(sum - printed);
-  if (diff < 0.10) {
-    return '<div style="padding:10px 12px;background:rgba(95,107,58,0.12);border-radius:12px;font-size:12.5px;color:'+T.olive+';font-weight:700;">✓ Adds up</div>';
+  var diff = ourSum - printed;
+  var absDiff = Math.abs(diff);
+  if (absDiff < 0.10) {
+    return '<div style="padding:12px 14px;background:rgba(95,107,58,0.14);border-radius:14px;font-size:13px;color:'+T.olive+';font-weight:700;line-height:1.4;">✓ Adds up — start splitting</div>';
   }
-  return '<div style="padding:10px 12px;background:rgba(242,184,84,0.20);border-radius:12px;font-size:12.5px;color:#854f0b;font-weight:500;line-height:1.4;">' +
-    '⚠ Hmm, this doesn’t add up to the printed total of $'+printed.toFixed(2)+' — off by $'+diff.toFixed(2)+'. Edit any field above.' +
+  var dirText = diff > 0
+    ? 'your lines total $'+ourSum.toFixed(2)+' but the receipt says $'+printed.toFixed(2)+' (your lines are $'+absDiff.toFixed(2)+' high)'
+    : 'your lines total $'+ourSum.toFixed(2)+' but the receipt says $'+printed.toFixed(2)+' (your lines are $'+absDiff.toFixed(2)+' low)';
+  return '<div style="padding:14px 16px;background:rgba(229,75,60,0.10);border:1.5px solid rgba(229,75,60,0.35);border-radius:14px;color:'+T.cherry+';line-height:1.4;">' +
+    '<div style="font-size:14px;font-weight:800;letter-spacing:-0.2px;margin-bottom:6px;">Off by $'+absDiff.toFixed(2)+'</div>' +
+    '<div style="font-size:12.5px;color:'+T.inkSoft+';font-weight:500;margin-bottom:10px;">'+dirText+'.</div>' +
+    '<div style="font-size:11.5px;color:'+T.inkSoft+';font-weight:500;margin-bottom:10px;">Likely culprit: missed item, mis-read tax, hidden service charge, or a fee not added yet.</div>' +
+    '<div style="display:flex;gap:6px;flex-wrap:wrap;">' +
+      '<button onclick="expandFoodAndScroll()" style="font-size:11.5px;font-weight:700;padding:5px 10px;border-radius:999px;border:1.5px solid '+T.cherry+';background:#fff;color:'+T.cherry+';cursor:pointer;">Expand food</button>' +
+      '<button onclick="focusField(\'r-tax\')" style="font-size:11.5px;font-weight:700;padding:5px 10px;border-radius:999px;border:1.5px solid '+T.cherry+';background:#fff;color:'+T.cherry+';cursor:pointer;">Edit tax</button>' +
+      '<button onclick="focusField(\'r-service\')" style="font-size:11.5px;font-weight:700;padding:5px 10px;border-radius:999px;border:1.5px solid '+T.cherry+';background:#fff;color:'+T.cherry+';cursor:pointer;">Edit service</button>' +
+      '<button onclick="addFee()" style="font-size:11.5px;font-weight:700;padding:5px 10px;border-radius:999px;border:1.5px solid '+T.cherry+';background:#fff;color:'+T.cherry+';cursor:pointer;">Add charge</button>' +
+    '</div>' +
   '</div>';
 }
 
 function refreshMatchBanner() {
   var sub = (menuItems || []).reduce(function(s, m){ return s + (parseFloat(m.price)||0); }, 0);
   receiptData.subtotal = round2(sub);
-  var subEl = document.getElementById('totals-subtotal');
+  var subEl = document.getElementById('food-subtotal');
   if (subEl) subEl.innerHTML = moneyHTML(sub);
+  var tax = parseFloat(receiptData.tax) || 0;
+  var service = parseFloat(receiptData.serviceFee) || 0;
+  var tip = parseFloat(receiptData.tip) || 0;
+  var customs = (receiptData.fees || []).reduce(function(s,f){ return s + (parseFloat(f.amount)||0); }, 0);
+  var ourSum = sub + tax + service + tip + customs;
+  var ourSumEl = document.getElementById('our-sum-display');
+  if (ourSumEl) ourSumEl.innerHTML = moneyHTML(ourSum);
   var bannerEl = document.getElementById('receipt-match-banner');
   if (bannerEl) bannerEl.innerHTML = matchBannerHTML();
 }
@@ -1516,14 +1542,10 @@ function renderHostScanSheet() {
   if (!currentDinner) return;
   hostSheet = 'scan';
   stopTicker();
-  // Auto-derive subtotal from items so it's always live
+  // Auto-derive food subtotal from items
   var derivedSub = (menuItems || []).reduce(function(s, m){ return s + (parseFloat(m.price)||0); }, 0);
   receiptData.subtotal = round2(derivedSub);
   var hasScanned = (menuItems || []).length > 0;
-  var hasAnyTotals = derivedSub > 0
-    || (parseFloat(receiptData.tax)   || 0) > 0
-    || (parseFloat(receiptData.tip)   || 0) > 0
-    || (parseFloat(receiptData.receiptTotal) || 0) > 0;
 
   var html = '<div class="tab-app tab-fade-in">';
   html += progressBarHTML('scan');
@@ -1533,36 +1555,77 @@ function renderHostScanSheet() {
     back: 'showHostDashboard()',
   });
 
-  // 1) Photo upload card
+  // 1) Photo card
+  html += photoCardHTML(hasScanned);
+  // 2) Food zone (collapsed by default — host review only; eaters still see full itemized list)
+  html += foodZoneHTML(derivedSub);
+  // 3) Charges zone (Tax + Service fee, each with a reclassify control)
+  html += chargesZoneHTML();
+  // 4) Tip + custom add-ons
+  html += tipAndAddonsZoneHTML();
+  // 5) Receipt printed total + reconciliation banner
+  html += printedTotalAndReconHTML();
+
+  // Confirm
   html +=
     '<div style="padding:0 22px 14px;">' +
-      '<div class="tab-card">' +
-        '<div style="display:flex;align-items:center;gap:14px;margin-bottom:14px;">' +
-          '<div style="width:48px;height:48px;border-radius:14px;background:'+T.peachSoft+';display:flex;align-items:center;justify-content:center;font-size:24px;flex-shrink:0;">📷</div>' +
-          '<div style="flex:1;min-width:0;">' +
-            '<div style="font-size:15px;font-weight:700;color:'+T.ink+';letter-spacing:-0.2px;">Snap the receipt</div>' +
-            '<div style="font-size:12px;color:'+T.inkSoft+';margin-top:2px;font-weight:500;">AI reads items, tax & total.</div>' +
+      '<button class="tab-grad-btn" style="width:100%;justify-content:center;padding:16px;" onclick="confirmReceiptTotals()">Confirm & open the tab →</button>' +
+    '</div>';
+  // Manual fallback
+  html +=
+    '<div style="padding:6px 22px 60px;text-align:center;">' +
+      '<button onclick="setHostSheet(\'add-eaters\')" class="tab-ghost-btn" style="font-size:12.5px;color:'+T.inkSoft+';font-weight:600;">No receipt? Add items manually</button>' +
+    '</div>';
+  html += '</div>';
+
+  document.getElementById('app').innerHTML = html;
+  scrollTopReset();
+  (receiptData.fees || []).forEach(function(_, idx) { renderFeeRow(idx); });
+}
+
+function photoCardHTML(hasScanned) {
+  return '<div style="padding:0 22px 14px;">' +
+    '<div class="tab-card">' +
+      '<div style="display:flex;align-items:center;gap:14px;margin-bottom:14px;">' +
+        '<div style="width:48px;height:48px;border-radius:14px;background:'+T.peachSoft+';display:flex;align-items:center;justify-content:center;font-size:24px;flex-shrink:0;">📷</div>' +
+        '<div style="flex:1;min-width:0;">' +
+          '<div style="font-size:15px;font-weight:700;color:'+T.ink+';letter-spacing:-0.2px;">Snap the receipt</div>' +
+          '<div style="font-size:12px;color:'+T.inkSoft+';margin-top:2px;font-weight:500;">AI reads items, tax & total.</div>' +
+        '</div>' +
+      '</div>' +
+      '<label for="receipt-img" style="display:block;cursor:pointer;padding:14px 16px;background:#FFF8EE;border:1.5px dashed '+T.rule+';border-radius:14px;text-align:center;">' +
+        (hasScanned
+          ? '<span style="color:'+T.olive+';font-weight:700;font-size:13.5px;">✓ Receipt scanned' + (receiptData._lastFileName ? ' — '+escapeHtml(receiptData._lastFileName) : '') + '</span><br>' +
+            '<span style="color:'+T.inkSoft+';font-size:11.5px;font-weight:500;display:inline-block;margin-top:2px;">Tap to scan a different photo</span>'
+          : '<span style="color:'+T.inkSoft+';font-weight:600;font-size:13.5px;">📂 Take photo or choose from gallery</span>') +
+      '</label>' +
+      '<input type="file" id="receipt-img" accept="image/*" onchange="scanReceipt()" style="display:none;" />' +
+      '<div id="scan-status" style="font-size:13px;margin-top:10px;color:'+T.inkSoft+';"></div>' +
+    '</div>' +
+  '</div>';
+}
+
+function foodZoneHTML(sub) {
+  var n = (menuItems || []).length;
+  var html = '<div style="padding:0 22px 14px;" id="food-zone">' +
+    '<div class="tab-card" style="padding:14px 18px;">' +
+      '<button onclick="toggleFoodExpanded()" aria-expanded="'+(foodExpanded?'true':'false')+'" style="background:transparent;border:none;width:100%;display:flex;align-items:center;justify-content:space-between;cursor:pointer;padding:0;color:'+T.ink+';font-family:'+T.sans+';-webkit-tap-highlight-color:transparent;">' +
+        '<div style="display:flex;align-items:center;gap:12px;min-width:0;">' +
+          '<span style="font-size:24px;flex-shrink:0;">🍽️</span>' +
+          '<div style="text-align:left;min-width:0;">' +
+            '<div style="font-size:14.5px;font-weight:700;letter-spacing:-0.2px;">Food &amp; drinks</div>' +
+            '<div style="font-size:11.5px;color:'+T.inkSoft+';font-weight:500;margin-top:2px;">' +
+              n + ' item' + (n === 1 ? '' : 's') + ' · tap to ' + (foodExpanded ? 'collapse' : 'expand') +
+            '</div>' +
           '</div>' +
         '</div>' +
-        '<label for="receipt-img" style="display:block;cursor:pointer;padding:14px 16px;background:#FFF8EE;border:1.5px dashed '+T.rule+';border-radius:14px;text-align:center;">' +
-          (hasScanned
-            ? '<span style="color:'+T.olive+';font-weight:700;font-size:13.5px;">✓ Receipt scanned' + (receiptData._lastFileName ? ' — '+escapeHtml(receiptData._lastFileName) : '') + '</span><br>' +
-              '<span style="color:'+T.inkSoft+';font-size:11.5px;font-weight:500;display:inline-block;margin-top:2px;">Tap to scan a different photo</span>'
-            : '<span style="color:'+T.inkSoft+';font-weight:600;font-size:13.5px;">📂 Take photo or choose from gallery</span>') +
-        '</label>' +
-        '<input type="file" id="receipt-img" accept="image/*" onchange="scanReceipt()" style="display:none;" />' +
-        '<div id="scan-status" style="font-size:13px;margin-top:10px;color:'+T.inkSoft+';"></div>' +
-      '</div>' +
-    '</div>';
-
-  // 2) Items + breakdown card
-  if (hasScanned || hasAnyTotals) {
-    html += '<div style="padding:0 22px 14px;"><div class="tab-card">';
-    html +=
-      '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">' +
-        '<div style="font-size:11px;font-weight:700;letter-spacing:0.6px;text-transform:uppercase;color:'+T.inkSoft+';">What\'s on the receipt</div>' +
-        '<button onclick="addMenuItem()" class="tab-ghost-btn" style="border:1.5px solid '+T.tomato+';border-radius:999px;padding:4px 11px;">+ Add</button>' +
-      '</div>' +
+        '<div style="display:flex;align-items:center;gap:8px;flex-shrink:0;">' +
+          '<span id="food-subtotal">'+moneyHTML(sub)+'</span>' +
+          '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="'+T.inkDim+'" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="transform:rotate('+(foodExpanded?'180deg':'0deg')+');transition:transform 0.2s ease;"><polyline points="6 9 12 15 18 9"/></svg>' +
+        '</div>' +
+      '</button>';
+  if (foodExpanded) {
+    html += '<div style="margin-top:14px;padding-top:12px;border-top:1.5px solid '+T.rule+';">' +
       '<div id="menu-items-list">';
     (menuItems || []).forEach(function(item, idx) {
       html +=
@@ -1580,68 +1643,135 @@ function renderHostScanSheet() {
           '<button onclick="removeMenuItemByIdx('+idx+')" style="background:none;border:none;color:'+T.inkDim+';font-size:18px;cursor:pointer;padding:0 2px;flex-shrink:0;">×</button>' +
         '</div>';
     });
-    if (!hasScanned) {
+    if (n === 0) {
       html += '<div style="padding:14px 0;font-size:13px;color:'+T.inkDim+';text-align:center;font-weight:500;">No items yet — scan a receipt above or hit "+ Add".</div>';
     }
-    html += '</div>';
+    html += '</div>' +
+      '<button onclick="addMenuItem()" class="tab-outline-btn" style="width:100%;margin-top:10px;">+ Add item</button>' +
+    '</div>';
+  }
+  html += '</div></div>';
+  return html;
+}
 
-    // Breakdown
-    html += '<div style="margin-top:14px;padding-top:12px;border-top:1.5px solid '+T.rule+';display:flex;flex-direction:column;gap:9px;font-size:13.5px;">' +
-      '<div style="display:flex;justify-content:space-between;align-items:center;">' +
-        '<span style="color:'+T.inkSoft+';font-weight:500;">Food subtotal</span>' +
-        '<span id="totals-subtotal" style="color:'+T.ink+';font-weight:700;">'+moneyHTML(derivedSub)+'</span>' +
+function chargesZoneHTML() {
+  return '<div style="padding:0 22px 14px;">' +
+    '<div class="tab-card">' +
+      '<div style="font-size:11px;font-weight:700;letter-spacing:0.6px;text-transform:uppercase;color:'+T.inkSoft+';margin-bottom:6px;">Charges on the receipt</div>' +
+      '<div style="font-size:11.5px;color:'+T.inkSoft+';margin-bottom:14px;font-weight:500;line-height:1.4;">Re-label any line if the scanner guessed wrong.</div>' +
+      chargeRowHTML('Tax', 'tax') +
+      chargeRowHTML('Service fee', 'service') +
+    '</div>' +
+  '</div>';
+}
+
+function chargeRowHTML(label, kind) {
+  var value = kind === 'tax' ? (receiptData.tax || 0) : (receiptData.serviceFee || 0);
+  var inputId = kind === 'tax' ? 'r-tax' : 'r-service';
+  var pickerOpts =
+    '<option value="'+kind+'" selected>Keep as ' + escapeHtml(label.toLowerCase()) + '</option>' +
+    (kind !== 'tax'     ? '<option value="tax">Re-label as tax</option>'         : '') +
+    (kind !== 'service' ? '<option value="service">Re-label as service fee</option>' : '') +
+    '<option value="tip">Re-label as tip</option>';
+  return '<div style="display:flex;align-items:center;gap:10px;padding:11px 0;border-bottom:1px solid '+T.ruleSoft+';">' +
+    '<div style="flex:1;min-width:0;">' +
+      '<div style="font-size:14.5px;font-weight:600;color:'+T.ink+';">'+escapeHtml(label)+'</div>' +
+      '<div style="margin-top:3px;">' +
+        '<select onchange="reclassifyCharge(\''+kind+'\', this.value)" style="font-size:11px;color:'+T.inkDim+';background:transparent;border:none;cursor:pointer;font-weight:500;padding:0;">' +
+          pickerOpts +
+        '</select>' +
       '</div>' +
-      '<div style="display:flex;justify-content:space-between;align-items:center;">' +
-        '<span style="color:'+T.inkSoft+';font-weight:500;">Tax</span>' +
-        moneyInputHTML('r-tax', receiptData.tax || 0) +
-      '</div>' +
-      '<div style="display:flex;justify-content:space-between;align-items:center;">' +
-        '<span style="color:'+T.inkSoft+';font-weight:500;">Tip on receipt</span>' +
+    '</div>' +
+    moneyInputHTML(inputId, value) +
+  '</div>';
+}
+
+function tipAndAddonsZoneHTML() {
+  return '<div style="padding:0 22px 14px;">' +
+    '<div class="tab-card">' +
+      '<div style="font-size:11px;font-weight:700;letter-spacing:0.6px;text-transform:uppercase;color:'+T.inkSoft+';margin-bottom:14px;">Tip &amp; add-ons</div>' +
+      '<div style="display:flex;align-items:center;gap:10px;padding:11px 0;border-bottom:1px solid '+T.ruleSoft+';">' +
+        '<div style="flex:1;min-width:0;">' +
+          '<div style="font-size:14.5px;font-weight:600;color:'+T.ink+';">Tip</div>' +
+          '<div style="font-size:11px;color:'+T.inkDim+';margin-top:2px;font-weight:500;">Extra tip on top of any service fee.</div>' +
+        '</div>' +
         moneyInputHTML('r-tip', receiptData.tip || 0) +
       '</div>' +
-      '<div style="display:flex;justify-content:space-between;align-items:center;padding-top:8px;border-top:1px solid '+T.ruleSoft+';">' +
-        '<span style="color:'+T.ink+';font-weight:700;">Receipt printed total</span>' +
+      '<div id="fees-list" style="margin-top:8px;"></div>' +
+      '<button onclick="addFee()" class="tab-outline-btn" style="width:100%;margin-top:10px;">+ Add custom charge</button>' +
+    '</div>' +
+  '</div>';
+}
+
+function printedTotalAndReconHTML() {
+  var sub = (menuItems || []).reduce(function(s,m){ return s + (parseFloat(m.price)||0); }, 0);
+  var tax = parseFloat(receiptData.tax) || 0;
+  var service = parseFloat(receiptData.serviceFee) || 0;
+  var tip = parseFloat(receiptData.tip) || 0;
+  var customs = (receiptData.fees || []).reduce(function(s,f){ return s + (parseFloat(f.amount)||0); }, 0);
+  var ourSum = sub + tax + service + tip + customs;
+  return '<div style="padding:0 22px 14px;">' +
+    '<div class="tab-card">' +
+      '<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;">' +
+        '<div>' +
+          '<div style="font-size:11px;font-weight:700;letter-spacing:0.6px;text-transform:uppercase;color:'+T.inkSoft+';">Receipt printed total</div>' +
+          '<div style="font-size:11px;color:'+T.inkDim+';margin-top:2px;font-weight:500;">The grand total printed at the bottom.</div>' +
+        '</div>' +
         moneyInputHTML('r-total', receiptData.receiptTotal || 0, { bold: true }) +
       '</div>' +
-    '</div>';
-
-    // Match banner
-    html += '<div id="receipt-match-banner" style="margin-top:12px;">' + matchBannerHTML() + '</div>';
-
-    html += '</div></div>';
-  }
-
-  // 3) Extra fees / extra tip card
-  html +=
-    '<div style="padding:0 22px 14px;">' +
-      '<div class="tab-card">' +
-        '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;gap:14px;">' +
-          '<div style="min-width:0;">' +
-            '<div style="font-size:14.5px;font-weight:700;color:'+T.ink+';letter-spacing:-0.2px;">Any other fees or extra tip?</div>' +
-            '<div style="font-size:11.5px;color:'+T.inkSoft+';margin-top:2px;font-weight:500;">Optional — corkage, service fee, extra tip on top.</div>' +
-          '</div>' +
-          '<button onclick="addFee()" class="tab-ghost-btn" style="border:1.5px solid '+T.tomato+';border-radius:999px;padding:4px 11px;flex-shrink:0;">+ Add</button>' +
-        '</div>' +
-        '<div id="fees-list" style="margin-top:10px;"></div>' +
+      '<div style="margin-top:12px;padding-top:12px;border-top:1px solid '+T.ruleSoft+';display:flex;justify-content:space-between;align-items:center;font-size:12.5px;color:'+T.inkSoft+';">' +
+        '<span style="font-weight:600;">Your lines add to</span>' +
+        '<span id="our-sum-display" style="font-weight:700;color:'+T.ink+';">'+moneyHTML(ourSum)+'</span>' +
       '</div>' +
-    '</div>';
+      '<div id="receipt-match-banner" style="margin-top:12px;">' + matchBannerHTML() + '</div>' +
+    '</div>' +
+  '</div>';
+}
 
-  // 4) Confirm
-  html +=
-    '<div style="padding:0 22px 14px;">' +
-      '<button class="tab-grad-btn" style="width:100%;justify-content:center;padding:16px;" onclick="confirmReceiptTotals()">Confirm & open the tab →</button>' +
-    '</div>';
+function toggleFoodExpanded() {
+  foodExpanded = !foodExpanded;
+  renderHostScanSheet();
+  if (foodExpanded) {
+    var z = document.getElementById('food-zone');
+    if (z) z.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+}
 
-  // 5) Manual-entry fallback (demoted)
-  html +=
-    '<div style="padding:6px 22px 60px;text-align:center;">' +
-      '<button onclick="setHostSheet(\'add-eaters\')" class="tab-ghost-btn" style="font-size:12.5px;color:'+T.inkSoft+';font-weight:600;">No receipt? Add items manually</button>' +
-    '</div>';
+function expandFoodAndScroll() {
+  if (!foodExpanded) { foodExpanded = true; renderHostScanSheet(); }
+  var z = document.getElementById('food-zone');
+  if (z) z.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
 
-  html += '</div>';
-  document.getElementById('app').innerHTML = html;
-  scrollTopReset();
-  (receiptData.fees || []).forEach(function(_, idx) { renderFeeRow(idx); });
+function focusField(id) {
+  var el = document.getElementById(id);
+  if (el) { el.focus(); el.select && el.select(); }
+}
+
+function reclassifyCharge(currentKind, newKind) {
+  if (!newKind || currentKind === newKind) return;
+  var v = parseFloat(
+    currentKind === 'tax' ? receiptData.tax :
+    currentKind === 'service' ? receiptData.serviceFee :
+    receiptData.tip
+  ) || 0;
+  // Zero the source slot
+  if (currentKind === 'tax')     receiptData.tax        = 0;
+  else if (currentKind === 'service') receiptData.serviceFee = 0;
+  else if (currentKind === 'tip') receiptData.tip       = 0;
+  // Add to destination slot
+  if (newKind === 'tax')     receiptData.tax        = (parseFloat(receiptData.tax)        || 0) + v;
+  else if (newKind === 'service') receiptData.serviceFee = (parseFloat(receiptData.serviceFee) || 0) + v;
+  else if (newKind === 'tip') receiptData.tip       = (parseFloat(receiptData.tip)        || 0) + v;
+  renderHostScanSheet();
+}
+
+function setFeeProportional(idx, proportional) {
+  if (!receiptData.fees || !receiptData.fees[idx]) return;
+  receiptData.fees[idx].proportional = !!proportional;
+  delete receiptData.fees[idx].split;
+  delete receiptData.fees[idx].person;
+  renderHostScanSheet();
 }
 
 function scanReceipt() {
@@ -1691,6 +1821,12 @@ function scanReceipt() {
         if (d.tax      != null) receiptData.tax          = parseFloat(d.tax);
         if (d.tip      != null) receiptData.tip          = parseFloat(d.tip);
         if (d.total    != null) receiptData.receiptTotal = parseFloat(d.total);
+        // Best-effort: try a few common keys the Worker MIGHT return for an
+        // auto-gratuity / service charge. If none present, host re-labels in UI.
+        var svcKey = ['service', 'service_fee', 'serviceFee', 'gratuity', 'auto_gratuity', 'autograt'].find(function(k) {
+          return d[k] != null && !isNaN(parseFloat(d[k]));
+        });
+        if (svcKey) receiptData.serviceFee = parseFloat(d[svcKey]);
       }
 
       if (itemsRes && itemsRes.success && itemsRes.data && itemsRes.data.length > 0) {
@@ -1742,26 +1878,23 @@ function renderFeeRow(idx) {
   var list = document.getElementById('fees-list');
   if (!list) return;
   var fee = receiptData.fees[idx];
-  var eaterNames = orders.map(function(o){ return o.name; });
-  var personOpts = eaterNames.map(function(n) {
-    return '<option value="'+attr(n)+'"'+(fee.person===n?' selected':'')+'>'+escapeHtml(n)+'</option>';
-  }).join('');
+  // Backward compat: an old { split:'everyone' } fee = even split; { proportional:true } = proportional.
+  var isProportional = !!fee.proportional || fee.split === 'proportional';
   var div = document.createElement('div');
-  div.style.cssText = 'display:flex;gap:8px;align-items:center;margin-bottom:8px;flex-wrap:wrap;';
+  div.style.cssText = 'background:'+T.paper+';border-radius:14px;padding:12px;margin-bottom:8px;';
   div.innerHTML =
-    '<input type="text" placeholder="Fee name (e.g. corkage)" value="'+attr(fee.name||'')+'" data-idx="'+idx+'" data-field="name" oninput="updateFeeEl(this)" style="flex:1;min-width:140px;font-size:13px;padding:9px 10px;border:1.5px solid '+T.rule+';border-radius:10px;background:#FFF8EE;" />' +
-    '<div style="display:inline-flex;align-items:center;gap:1px;background:#FFF8EE;border:1.5px solid '+T.rule+';border-radius:10px;padding:7px 10px;">' +
-      '<span style="opacity:0.55;font-weight:500;font-size:11px;color:'+T.inkDim+';">$</span>' +
-      '<input type="number" placeholder="0.00" step="0.01" min="0" value="'+(fee.amount?parseFloat(fee.amount).toFixed(2):'')+'" data-idx="'+idx+'" data-field="amount" oninput="updateFeeEl(this)" style="width:62px;font-size:13px;font-weight:600;color:'+T.ink+';border:none;background:transparent;text-align:right;outline:none;padding:0;" />' +
+    '<div style="display:flex;gap:8px;align-items:center;">' +
+      '<input type="text" placeholder="Custom charge (e.g. corkage)" value="'+attr(fee.name||'')+'" data-idx="'+idx+'" data-field="name" oninput="updateFeeEl(this)" style="flex:1;min-width:0;font-size:13.5px;font-weight:600;padding:9px 12px;border:1px solid '+T.rule+';border-radius:10px;background:#fff;outline:none;" />' +
+      '<div style="display:inline-flex;align-items:center;gap:1px;background:#fff;border:1px solid '+T.rule+';border-radius:10px;padding:7px 10px;">' +
+        '<span style="opacity:0.55;font-weight:500;font-size:11px;color:'+T.inkDim+';">$</span>' +
+        '<input type="number" placeholder="0.00" step="0.01" min="0" value="'+(fee.amount?parseFloat(fee.amount).toFixed(2):'')+'" data-idx="'+idx+'" data-field="amount" oninput="updateFeeEl(this)" style="width:60px;font-size:13px;font-weight:600;color:'+T.ink+';border:none;background:transparent;text-align:right;outline:none;padding:0;" />' +
+      '</div>' +
+      '<button data-idx="'+idx+'" onclick="removeFee(this.dataset.idx)" style="background:none;border:none;color:'+T.tomato+';font-size:18px;cursor:pointer;line-height:1;padding:0 4px;">×</button>' +
     '</div>' +
-    '<select data-idx="'+idx+'" data-field="split" onchange="updateFeeEl(this)" style="font-size:12px;padding:9px;border:1.5px solid '+T.rule+';border-radius:10px;background:#FFF8EE;">' +
-      '<option value="everyone"'+(fee.split==='everyone'?' selected':'')+'>Split evenly</option>' +
-      '<option value="person"'+(fee.split==='person'?' selected':'')+'>Assign to…</option>' +
-    '</select>' +
-    (fee.split === 'person'
-      ? '<select data-idx="'+idx+'" data-field="person" onchange="updateFeeEl(this)" style="font-size:12px;padding:9px;border:1.5px solid '+T.rule+';border-radius:10px;background:#FFF8EE;"><option value="">Pick</option>'+personOpts+'</select>'
-      : '') +
-    '<button data-idx="'+idx+'" onclick="removeFee(this.dataset.idx)" style="background:none;border:none;color:'+T.tomato+';font-size:18px;cursor:pointer;">×</button>';
+    '<div style="display:flex;gap:6px;margin-top:8px;">' +
+      '<button onclick="setFeeProportional('+idx+', false)" style="padding:5px 12px;border-radius:999px;font-size:11px;font-weight:700;letter-spacing:0.3px;border:1.5px solid '+(isProportional?T.rule:T.tomato)+';background:'+(isProportional?'#fff':'#FFF1EA')+';color:'+(isProportional?T.inkSoft:T.tomato)+';cursor:pointer;">Even split</button>' +
+      '<button onclick="setFeeProportional('+idx+', true)"  style="padding:5px 12px;border-radius:999px;font-size:11px;font-weight:700;letter-spacing:0.3px;border:1.5px solid '+(isProportional?T.tomato:T.rule)+';background:'+(isProportional?'#FFF1EA':'#fff')+';color:'+(isProportional?T.tomato:T.inkSoft)+';cursor:pointer;">Proportional</button>' +
+    '</div>';
   list.appendChild(div);
 }
 function updateFeeEl(el) {
@@ -1769,7 +1902,7 @@ function updateFeeEl(el) {
   var field = el.dataset.field;
   if (!receiptData.fees[idx]) return;
   receiptData.fees[idx][field] = field === 'amount' ? (parseFloat(el.value) || 0) : el.value;
-  if (field === 'split') renderHostScanSheet();
+  refreshMatchBanner();
 }
 function removeFee(idx) {
   receiptData.fees.splice(parseInt(idx), 1);
@@ -1779,10 +1912,20 @@ function removeFee(idx) {
 async function confirmReceiptTotals() {
   var sub = (menuItems || []).reduce(function(s, m){ return s + (parseFloat(m.price)||0); }, 0);
   var tax = parseFloat(receiptData.tax) || 0;
+  var service = parseFloat(receiptData.serviceFee) || 0;
   var tip = parseFloat(receiptData.tip) || 0;
-  if (!sub && !tax && !tip) { showToast('Add items or amounts first'); return; }
+  var customs = (receiptData.fees || []).reduce(function(s,f){ return s + (parseFloat(f.amount)||0); }, 0);
+  if (!sub && !tax && !service && !tip && !customs) { showToast('Add items or amounts first'); return; }
+  // Explicit-override reconciliation gate
+  var printed = parseFloat(receiptData.receiptTotal) || 0;
+  var ourSum = sub + tax + service + tip + customs;
+  if (printed > 0 && Math.abs(ourSum - printed) >= 0.10) {
+    var diff = Math.abs(ourSum - printed);
+    if (!confirm("It’s off by $" + diff.toFixed(2) + " — split anyway?")) return;
+  }
   receiptData.subtotal = round2(sub);
   receiptData.tax = tax;
+  receiptData.serviceFee = service;
   receiptData.tip = tip;
   receiptData.confirmed = true;
   var update = { receipt_data: receiptData, menu_items: menuItems };
@@ -2090,9 +2233,9 @@ function renderHostSettleSheet() {
     scrollTopReset();
     return;
   }
-  var feesTotal = (receiptData.fees || []).reduce(function(s,f){ return s+(f.amount||0); }, 0);
-  var grandTotal = (receiptData.subtotal||0) + (receiptData.tax||0) + (receiptData.tip||0) + feesTotal;
-  var tipLabel = (receiptData.tip > 0) ? 'on receipt' : 'none';
+  var feesTotal = (receiptData.fees || []).reduce(function(s,f){ return s+(parseFloat(f.amount)||0); }, 0);
+  var serviceFee = parseFloat(receiptData.serviceFee) || 0;
+  var grandTotal = (receiptData.subtotal||0) + (receiptData.tax||0) + serviceFee + (receiptData.tip||0) + feesTotal;
 
   var html = '<div class="tab-app tab-fade-in">';
   html += progressBarHTML('settle');
@@ -2117,10 +2260,13 @@ function renderHostSettleSheet() {
         '<div style="font-size:13px;color:'+T.inkSoft+';display:flex;flex-direction:column;gap:4px;">' +
           rowHTML('Food subtotal', '$'+(receiptData.subtotal||0).toFixed(2)) +
           rowHTML('Tax', '$'+(receiptData.tax||0).toFixed(2)) +
-          rowHTML('Tip ('+tipLabel+')', '$'+(receiptData.tip||0).toFixed(2));
+          (serviceFee > 0 ? rowHTML('Service fee', '$'+serviceFee.toFixed(2)) : '') +
+          rowHTML('Tip', '$'+(receiptData.tip||0).toFixed(2));
   (receiptData.fees || []).forEach(function(f) {
     if (f.name && f.amount) {
-      html += rowHTML(escapeHtml(f.name) + ' (' + (f.split === 'person' ? escapeHtml(f.person||'') : 'split') + ')', '$'+parseFloat(f.amount).toFixed(2));
+      var splitLabel = (f.split === 'person' && f.person) ? escapeHtml(f.person)
+                       : (f.proportional || f.split === 'proportional') ? 'proportional' : 'even';
+      html += rowHTML(escapeHtml(f.name) + ' (' + splitLabel + ')', '$'+parseFloat(f.amount).toFixed(2));
     }
   });
   html +=
@@ -2142,9 +2288,11 @@ function renderHostSettleSheet() {
       '</div>';
   } else {
     // Reckoning table
-    var hasFees = (receiptData.fees || []).some(function(f){ return f.amount > 0; });
-    var checkTotal = lastResults.reduce(function(s,r){ return s+r.total; }, 0);
-    var balanced = Math.abs(checkTotal - grandTotal) < 0.10;
+    var hasFees     = (receiptData.fees || []).some(function(f){ return parseFloat(f.amount) > 0; });
+    var hasService  = lastResults.some(function(r){ return (r.service || 0) > 0.0049; });
+    var checkTotal  = lastResults.reduce(function(s,r){ return s + r.total; }, 0);
+    var grandRounded = (lastResults._grandTotal != null) ? lastResults._grandTotal : (Math.round(grandTotal * 100) / 100);
+    var balanced    = Math.abs(checkTotal - grandRounded) < 0.005; // penny-reconciled = exact
     html +=
       '<div style="padding:0 22px 14px;">' +
         '<div class="tab-card">' +
@@ -2154,6 +2302,7 @@ function renderHostSettleSheet() {
               '<th style="text-align:left;padding:8px 6px;border-bottom:1.5px solid '+T.rule+';">Name</th>' +
               '<th style="text-align:right;padding:8px 6px;border-bottom:1.5px solid '+T.rule+';">Food</th>' +
               '<th style="text-align:right;padding:8px 6px;border-bottom:1.5px solid '+T.rule+';">Tax</th>' +
+              (hasService ? '<th style="text-align:right;padding:8px 6px;border-bottom:1.5px solid '+T.rule+';">Service</th>' : '') +
               '<th style="text-align:right;padding:8px 6px;border-bottom:1.5px solid '+T.rule+';">Tip</th>' +
               (hasFees ? '<th style="text-align:right;padding:8px 6px;border-bottom:1.5px solid '+T.rule+';">Fees</th>' : '') +
               '<th style="text-align:right;padding:8px 6px;border-bottom:1.5px solid '+T.rule+';">Total</th>' +
@@ -2167,6 +2316,7 @@ function renderHostSettleSheet() {
           '</td>' +
           '<td style="padding:11px 6px;border-bottom:1px solid '+T.ruleSoft+';text-align:right;color:'+T.inkSoft+';">$'+r.subtotal.toFixed(2)+'</td>' +
           '<td style="padding:11px 6px;border-bottom:1px solid '+T.ruleSoft+';text-align:right;color:'+T.inkSoft+';">$'+r.tax.toFixed(2)+'</td>' +
+          (hasService ? '<td style="padding:11px 6px;border-bottom:1px solid '+T.ruleSoft+';text-align:right;color:'+T.inkSoft+';">$'+(r.service||0).toFixed(2)+'</td>' : '') +
           '<td style="padding:11px 6px;border-bottom:1px solid '+T.ruleSoft+';text-align:right;color:'+T.inkSoft+';">$'+r.tip.toFixed(2)+'</td>' +
           (hasFees ? '<td style="padding:11px 6px;border-bottom:1px solid '+T.ruleSoft+';text-align:right;color:'+T.inkSoft+';">$'+r.feeShare.toFixed(2)+'</td>' : '') +
           '<td style="padding:11px 6px;border-bottom:1px solid '+T.ruleSoft+';text-align:right;font-weight:700;">$'+r.total.toFixed(2)+'</td>' +
@@ -2174,10 +2324,14 @@ function renderHostSettleSheet() {
     });
     html +=
             '</tbody></table></div>' +
-          '<div style="margin-top:12px;padding:10px 12px;background:'+T.paper+';border-radius:12px;display:flex;justify-content:space-between;align-items:center;">' +
-            '<span style="font-size:11px;color:'+T.inkSoft+';font-weight:600;letter-spacing:0.4px;text-transform:uppercase;">Check ties</span>' +
+          '<div style="margin-top:12px;padding:12px 14px;background:'+(balanced?'rgba(95,107,58,0.14)':T.paper)+';border-radius:14px;display:flex;justify-content:space-between;align-items:center;">' +
+            '<span style="font-size:11px;color:'+(balanced?T.olive:T.inkSoft)+';font-weight:700;letter-spacing:0.4px;text-transform:uppercase;">' +
+              (balanced ? 'Adds up' : 'Check') +
+            '</span>' +
             '<span style="font-size:13px;font-weight:700;color:'+(balanced?T.olive:T.tomato)+';">' +
-              (balanced ? '✓ Balanced' : '⚠ Off by $'+Math.abs(checkTotal - grandTotal).toFixed(2)) +
+              (balanced
+                ? '✓ Everyone adds up to $'+grandRounded.toFixed(2)
+                : '⚠ Off by $'+Math.abs(checkTotal - grandRounded).toFixed(2)) +
             '</span>' +
           '</div>' +
         '</div>' +
@@ -2216,38 +2370,124 @@ function rowHTML(label, val) {
 
 function calculateFromClaims() {
   if (orders.length === 0) { showToast('No orders yet'); return; }
-  var feesTotal = (receiptData.fees || []).reduce(function(s,f){ return s+(f.amount||0); }, 0);
-  var foodSubtotal = orders.reduce(function(s,o){ return s+(o.subtotal||0); }, 0);
-  var gap = Math.round(((receiptData.subtotal||0) - foodSubtotal) * 100) / 100;
-  if (Math.abs(gap) > 0.10) {
-    pendingCalcData = { gap: gap, foodSubtotal: foodSubtotal };
+  // Detect unclaimed food (real menu items without a claimedBy, or, in
+  // manual mode, the gap between receipt subtotal and sum of order subtotals).
+  var unclaimedValue = 0;
+  if (menuItems && menuItems.length > 0) {
+    unclaimedValue = menuItems
+      .filter(function(m){ return !m.claimedBy; })
+      .reduce(function(s,m){ return s + (parseFloat(m.price)||0); }, 0);
+  } else {
+    var foodSubtotal = orders.reduce(function(s,o){ return s+(o.subtotal||0); }, 0);
+    unclaimedValue = Math.max(0, Math.round(((receiptData.subtotal||0) - foodSubtotal) * 100) / 100);
+  }
+  if (unclaimedValue >= 0.10) {
+    pendingCalcData = {
+      unclaimedValue: unclaimedValue,
+      gap: unclaimedValue,
+      foodSubtotal: orders.reduce(function(s,o){ return s+(o.subtotal||0); }, 0),
+    };
     setHostSheet('mismatch');
     return;
   }
   doCalculate(false);
 }
-function doCalculate(hostAbsorbs) {
-  var foodSubtotal = orders.reduce(function(s,o){ return s+(o.subtotal||0); }, 0);
-  var gap = Math.round(((receiptData.subtotal||0) - foodSubtotal) * 100) / 100;
-  lastResults = orders.map(function(o) {
-    var sub = o.subtotal || 0;
-    var prop = foodSubtotal > 0 ? sub/foodSubtotal : 1/orders.length;
-    var adjusted = hostAbsorbs ? sub : sub + (prop * gap);
-    var tax = prop * (receiptData.tax || 0);
-    var tip = prop * (receiptData.tip || 0);
-    var feeShare = 0;
-    (receiptData.fees || []).forEach(function(f) {
-      if (!f.amount) return;
-      if (f.split === 'person') { if (f.person === o.name) feeShare += f.amount; }
-      else { feeShare += f.amount / orders.length; }
+
+function doCalculate(hostAbsorbsUnclaimed) {
+  var foodSubtotal = parseFloat(receiptData.subtotal) || 0;
+  var tax       = parseFloat(receiptData.tax)        || 0;
+  var service   = parseFloat(receiptData.serviceFee) || 0;
+  var tip       = parseFloat(receiptData.tip)        || 0;
+  var customs   = (receiptData.fees || []);
+  var customsSum = customs.reduce(function(s,c){ return s + (parseFloat(c.amount)||0); }, 0);
+  var grandTotal = foodSubtotal + tax + service + tip + customsSum;
+  var hostName = (currentDinner && currentDinner.hostName) || '';
+
+  // Unclaimed value:
+  var unclaimedValue = 0;
+  if (menuItems && menuItems.length > 0) {
+    unclaimedValue = menuItems
+      .filter(function(m){ return !m.claimedBy; })
+      .reduce(function(s,m){ return s + (parseFloat(m.price)||0); }, 0);
+  } else {
+    var ordersFood = orders.reduce(function(s,o){ return s+(o.subtotal||0); }, 0);
+    unclaimedValue = Math.max(0, Math.round((foodSubtotal - ordersFood) * 100) / 100);
+  }
+
+  // Allocations: start from each eater's claimed food. Distribute unclaimed.
+  var allocs = orders.map(function(o) {
+    return { name: o.name, isHost: !!o.isHost, base: o.subtotal || 0, food: o.subtotal || 0 };
+  });
+  if (unclaimedValue > 0.005) {
+    if (hostAbsorbsUnclaimed) {
+      var h = allocs.find(function(a){ return a.isHost; });
+      if (h) {
+        h.food += unclaimedValue;
+      } else if (hostName) {
+        allocs.push({ name: hostName, isHost: true, base: 0, food: unclaimedValue, virtualHost: true });
+      } else {
+        // No host on the order list and no hostName — fall back to even split.
+        var per = unclaimedValue / Math.max(1, allocs.length);
+        allocs.forEach(function(a){ a.food += per; });
+      }
+    } else {
+      var perHead = unclaimedValue / Math.max(1, allocs.length);
+      allocs.forEach(function(a){ a.food += perHead; });
+    }
+  }
+
+  var totalFood = allocs.reduce(function(s,a){ return s + a.food; }, 0);
+  var n = allocs.length || 1;
+
+  // First pass: raw owes per person (high precision)
+  allocs.forEach(function(a) {
+    var share = totalFood > 0 ? a.food / totalFood : 1 / n;
+    a.share = share;
+    a.taxShare     = tax     * share;
+    a.serviceShare = service * share;
+    a.tipShare     = tip     * share;
+    a.feeShare = 0;
+    customs.forEach(function(c) {
+      var amt = parseFloat(c.amount) || 0;
+      if (!amt) return;
+      // Old shape compat: { split:'person', person } stays per-person; otherwise honour proportional flag.
+      if (c.split === 'person' && c.person) {
+        if (c.person === a.name) a.feeShare += amt;
+      } else if (c.proportional || c.split === 'proportional') {
+        a.feeShare += amt * share;
+      } else {
+        a.feeShare += amt / n;
+      }
     });
-    var total = adjusted + tax + tip + feeShare;
+    a.owesRaw = a.food + a.taxShare + a.serviceShare + a.tipShare + a.feeShare;
+    a.owes = Math.round(a.owesRaw * 100) / 100;
+  });
+
+  // Penny reconciliation — top payer absorbs the residual so the sum is exact.
+  var grandRounded = Math.round(grandTotal * 100) / 100;
+  var sumOwes = allocs.reduce(function(s,a){ return s + a.owes; }, 0);
+  var residual = Math.round((grandRounded - sumOwes) * 100) / 100;
+  if (Math.abs(residual) >= 0.01 && allocs.length > 0) {
+    var top = allocs.slice().sort(function(a,b){ return b.owes - a.owes; })[0];
+    if (top) top.owes = Math.round((top.owes + residual) * 100) / 100;
+  }
+
+  lastResults = allocs.map(function(a) {
     return {
-      name: o.name, subtotal: sub, tax: tax, tip: tip,
-      feeShare: feeShare, total: total,
-      tipPct: receiptData.tipPct || 0, isHost: o.isHost,
+      name: a.name,
+      subtotal: a.food,         // includes unclaimed share
+      baseSubtotal: a.base,
+      tax: a.taxShare,
+      service: a.serviceShare,
+      tip: a.tipShare,
+      feeShare: a.feeShare,
+      total: a.owes,            // penny-reconciled
+      tipPct: 0,
+      isHost: a.isHost,
+      virtualHost: !!a.virtualHost,
     };
   });
+  lastResults._grandTotal = grandRounded;
   totalsSent = false;
   setHostSheet('settle');
 }
@@ -2255,21 +2495,20 @@ function doCalculate(hostAbsorbs) {
 function renderHostMismatchScreen() {
   hostSheet = 'mismatch';
   stopTicker();
-  var p = pendingCalcData || { gap: 0, foodSubtotal: 0 };
-  var receiptSub = receiptData.subtotal || 0;
-  var gapAbs = Math.abs(p.gap);
+  var p = pendingCalcData || { gap: 0, foodSubtotal: 0, unclaimedValue: 0 };
+  var unclaimed = p.unclaimedValue || Math.abs(p.gap);
   document.getElementById('app').innerHTML =
     '<div class="tab-app tab-fade-in" style="padding:0;display:flex;flex-direction:column;min-height:100vh;">' +
       progressBarHTML('settle') +
       '<div style="position:relative;background:'+HERO_GRAD+';color:#FFF6EC;padding:28px 26px 80px;border-bottom-left-radius:36px;border-bottom-right-radius:36px;overflow:hidden;">' +
         '<div style="position:absolute;top:-80px;right:-50px;width:240px;height:240px;border-radius:999px;background:radial-gradient(circle, rgba(255,220,160,0.55), transparent 70%);"></div>' +
         '<div style="position:relative;">' +
-          '<div style="font-size:11px;letter-spacing:1.6px;text-transform:uppercase;font-weight:700;opacity:0.85;">Heads up</div>' +
+          '<div style="font-size:11px;letter-spacing:1.6px;text-transform:uppercase;font-weight:700;opacity:0.85;">Some food’s still unclaimed</div>' +
           '<div style="font-family:'+T.sans+';font-size:44px;font-weight:700;letter-spacing:-1.4px;line-height:1;margin-top:10px;">' +
-            'The math <span style="font-family:'+T.serif+';font-style:italic;font-weight:400;">isn’t</span> matching.' +
+            '$'+unclaimed.toFixed(2)+' <span style="font-family:'+T.serif+';font-style:italic;font-weight:400;">nobody</span> grabbed.' +
           '</div>' +
           '<div style="margin-top:14px;font-size:15px;font-weight:500;opacity:0.94;line-height:1.4;">' +
-            'Receipt subtotal is <strong>$'+receiptSub.toFixed(2)+'</strong>, but everyone’s picks add up to <strong>$'+p.foodSubtotal.toFixed(2)+'</strong>. Difference: <strong>$'+gapAbs.toFixed(2)+'</strong>.' +
+            'Pick how to handle the unclaimed plates before we split.' +
           '</div>' +
         '</div>' +
       '</div>' +
@@ -2278,8 +2517,8 @@ function renderHostMismatchScreen() {
           '<div style="display:flex;align-items:center;gap:14px;">' +
             '<div style="width:48px;height:48px;border-radius:14px;background:'+VIBE_GRAD.coral+';display:flex;align-items:center;justify-content:center;font-size:24px;">🤝</div>' +
             '<div style="flex:1;">' +
-              '<div style="font-size:16.5px;font-weight:700;color:'+T.ink+';letter-spacing:-0.3px;">Split it evenly</div>' +
-              '<div style="font-size:13px;color:'+T.inkSoft+';margin-top:2px;font-weight:500;">Spread the $'+gapAbs.toFixed(2)+' across everyone in proportion to their picks.</div>' +
+              '<div style="font-size:16.5px;font-weight:700;color:'+T.ink+';letter-spacing:-0.3px;">Split evenly</div>' +
+              '<div style="font-size:13px;color:'+T.inkSoft+';margin-top:2px;font-weight:500;">Spread the $'+unclaimed.toFixed(2)+' across everyone at the table.</div>' +
             '</div>' +
           '</div>' +
         '</button>' +
@@ -2287,8 +2526,8 @@ function renderHostMismatchScreen() {
           '<div style="display:flex;align-items:center;gap:14px;">' +
             '<div style="width:48px;height:48px;border-radius:14px;background:'+VIBE_GRAD.olive+';display:flex;align-items:center;justify-content:center;font-size:24px;">🫶</div>' +
             '<div style="flex:1;">' +
-              '<div style="font-size:16.5px;font-weight:700;color:'+T.ink+';letter-spacing:-0.3px;">You eat it</div>' +
-              '<div style="font-size:13px;color:'+T.inkSoft+';margin-top:2px;font-weight:500;">Host absorbs the difference. Friends pay only their picks + tax + tip.</div>' +
+              '<div style="font-size:16.5px;font-weight:700;color:'+T.ink+';letter-spacing:-0.3px;">You cover it</div>' +
+              '<div style="font-size:13px;color:'+T.inkSoft+';margin-top:2px;font-weight:500;">Host absorbs the unclaimed plates. Friends pay only their picks + tax + tip.</div>' +
             '</div>' +
           '</div>' +
         '</button>' +
@@ -2441,7 +2680,7 @@ async function showEaterView() {
   var savedName = localStorage.getItem('eater-name-' + sessionId);
   eaterCtx = { dinner: dinner, selectedIndices: [] };
   if (savedName) {
-    // Idempotently register as joined the moment we know who they are
+    // Backstop: fire join_dinner idempotently even on return visits.
     eaterJoinIfNeeded(savedName);
     var existing = await fetchEaterOrder(savedName);
     if (existing && existing.finalOwes != null) {
@@ -2457,12 +2696,15 @@ async function showEaterView() {
       return;
     }
     eaterCtx.prefillName = savedName;
+    eaterCtx.name = savedName;
+    if (menuItems && menuItems.length > 0) {
+      menuItems.forEach(function(m, i) { if (m.claimedBy === savedName) eaterCtx.selectedIndices.push(i); });
+    }
+    setEaterStage('claiming');
+    return;
   }
-  // Seed selectedIndices from any pre-claimed items for this name
-  if ((eaterCtx.prefillName || '') && menuItems.length > 0) {
-    menuItems.forEach(function(m, i) { if (m.claimedBy === eaterCtx.prefillName) eaterCtx.selectedIndices.push(i); });
-  }
-  setEaterStage('claiming');
+  // First visit: gate behind an explicit Join action
+  setEaterStage('join');
 }
 
 // Track names we've already registered this session so we don't spam join_dinner
@@ -2472,14 +2714,79 @@ function eaterJoinIfNeeded(name) {
   if (!n || _eaterJoinedNames[n]) return;
   _eaterJoinedNames[n] = true;
   supabase.rpc('join_dinner', { p_dinner_id: sessionId, p_name: n }).catch(function() {
-    // Allow a retry next time
     delete _eaterJoinedNames[n];
   });
 }
-function eaterNameMaybeJoin() {
-  var el = document.getElementById('guest-name');
-  if (!el) return;
-  eaterJoinIfNeeded(el.value);
+
+// ── Join-the-table gate ─────────────────────────────────────────────────
+function renderEaterJoinGate() {
+  var d = eaterCtx.dinner;
+  if (!d) return;
+  var v = vibeForDinner(d);
+  var hostName = d.hostName || '';
+  var hostFirst = hostName ? hostName.split(/\s+/)[0] : '';
+  var headline = hostFirst ? ('Join ' + hostFirst + '’s table') : 'Join the table';
+  // Priciest dish drives the hero emoji; fallback 🍽️
+  var emoji = '🍽️';
+  if (menuItems && menuItems.length) {
+    var top = menuItems.slice().sort(function(a, b){ return (b.price||0) - (a.price||0); })[0];
+    if (top) emoji = emojiForItem(top.name);
+  }
+  document.getElementById('app').innerHTML =
+    '<div class="tab-app tab-fade-in" style="min-height:100vh;display:flex;flex-direction:column;padding-bottom:0;">' +
+      '<div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:40px 28px;text-align:center;gap:20px;">' +
+        '<div style="font-size:88px;line-height:1;animation:tabBob 3s ease-in-out infinite;">'+emoji+'</div>' +
+        '<div>' +
+          '<div style="font-family:'+T.sans+';font-size:36px;font-weight:700;letter-spacing:-1.2px;line-height:1.05;color:'+T.ink+';">' +
+            escapeHtml(headline) +
+          '</div>' +
+          '<div style="margin-top:10px;font-family:'+T.serif+';font-style:italic;font-size:22px;font-weight:400;line-height:1.1;color:'+T.tomato+';">' +
+            escapeHtml(d.restaurant || 'Tonight') +
+          '</div>' +
+          '<div style="margin-top:6px;font-size:11.5px;color:'+T.inkSoft+';font-weight:700;letter-spacing:0.6px;text-transform:uppercase;">' +
+            escapeHtml(v.tag) +
+          '</div>' +
+        '</div>' +
+        '<div style="width:100%;max-width:340px;text-align:left;">' +
+          '<label class="tab-label" for="join-name">Your name</label>' +
+          '<input type="text" id="join-name" class="tab-input" placeholder="First name + last initial" autocomplete="given-name" />' +
+          '<div style="font-size:11px;color:'+T.inkDim+';margin-top:6px;font-weight:500;text-align:left;">First name + last initial keeps you unique at the table.</div>' +
+        '</div>' +
+        '<button class="tab-grad-btn" style="width:100%;max-width:340px;justify-content:center;padding:16px;" onclick="joinTheTable()">' +
+          'Join the table →' +
+        '</button>' +
+      '</div>' +
+    '</div>';
+  scrollTopReset();
+  setTimeout(function() {
+    var el = document.getElementById('join-name');
+    if (el) el.focus();
+  }, 120);
+}
+
+async function joinTheTable() {
+  var nameEl = document.getElementById('join-name');
+  var name = nameEl ? nameEl.value.trim() : '';
+  if (!name) { showToast('Enter your name first'); return; }
+  var btn = document.querySelector('.tab-app .tab-grad-btn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Joining…'; }
+  // Explicit join. This is the canonical signal — no onblur, no implicit fire.
+  try {
+    var res = await supabase.rpc('join_dinner', { p_dinner_id: sessionId, p_name: name });
+    if (res && res.error) console.warn('join_dinner error:', res.error);
+  } catch (e) { console.warn('join_dinner threw:', e); }
+  _eaterJoinedNames[name] = true;
+  try {
+    localStorage.setItem('eater-name-' + sessionId, name);
+    localStorage.setItem('last-eater-session', sessionId);
+  } catch (e) {}
+  eaterCtx.name = name;
+  eaterCtx.prefillName = name;
+  eaterCtx.selectedIndices = [];
+  if (menuItems && menuItems.length > 0) {
+    menuItems.forEach(function(m, i) { if (m.claimedBy === name) eaterCtx.selectedIndices.push(i); });
+  }
+  setEaterStage('claiming');
 }
 
 function setEaterStage(stage) {
@@ -2492,6 +2799,7 @@ function setEaterStage(stage) {
 function renderEaterStage(animate) {
   var d = eaterCtx.dinner;
   if (!d) return;
+  if (eaterStage === 'join') { renderEaterJoinGate(); return; }
   var v = vibeForDinner(d);
   var hostName = d.hostName || 'your host';
   var hostFirst = (hostName.split(/\s+/)[0]) || 'Zu';
@@ -2596,7 +2904,7 @@ function renderEaterClaimingBody() {
     '<div class="tab-card" style="margin-bottom:14px;padding:14px 16px;">' +
       '<label class="tab-label" style="margin-bottom:6px;">Your name</label>' +
       '<input type="text" id="guest-name" class="tab-input" placeholder="First name + last initial" value="'+attr(meName)+'"' +
-        (meName ? ' readonly' : '') + ' oninput="syncEaterName()" onblur="eaterNameMaybeJoin()" />' +
+        (meName ? ' readonly' : '') + ' oninput="syncEaterName()" />' +
       '<div style="font-size:11px;color:'+T.inkDim+';margin-top:6px;font-weight:500;">First name + last initial keeps everyone unique.</div>' +
     '</div>';
 
@@ -3008,6 +3316,8 @@ Object.assign(window, {
   setTipMode, setReceiptTip, updateTipFromPct, updateReceiptField,
   addFee, updateFeeEl, removeFee, checkReceiptMatch,
   confirmReceiptTotals, sendMenuToEaters,
+  toggleFoodExpanded, expandFoodAndScroll, focusField,
+  reclassifyCharge, setFeeProportional,
   // Add-eaters sheet
   addPersonEntry, removePersonEntry, addPersonItem, saveAllOrders,
   // Edit-order sheet
@@ -3016,7 +3326,7 @@ Object.assign(window, {
   calculateFromClaims, doCalculate, notifyEaters, togglePaid,
   // Eater
   submitEaterOrder, toggleEaterClaim, updateEaterRunningTotal, syncEaterName,
-  eaterNameMaybeJoin,
+  joinTheTable,
   addItem, editEaterOrder, payViaZelle, payViaVenmo,
 });
 </script>
