@@ -8,6 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300..700;1,9..144,300..700&family=Outfit:wght@300;400;500;600;700;800&display=swap">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 <style>
 * { box-sizing: border-box; margin: 0; padding: 0; }
 html, body { min-height: 100%; }
@@ -525,6 +526,118 @@ function liveDinnerFromList(dinners) {
   return null;
 }
 
+// ── Linear host-journey progress bar ─────────────────────────────────────
+function progressBarHTML(step) {
+  var steps = [
+    { key: 'scan',   label: 'Scan'   },
+    { key: 'share',  label: 'Share'  },
+    { key: 'settle', label: 'Settle' },
+  ];
+  var order = { scan: 0, share: 1, settle: 2 };
+  var ci = order[step];
+  if (ci == null) return '';
+  var html =
+    '<div style="position:sticky;top:0;left:0;right:0;background:'+T.cream+
+    ';z-index:30;padding:14px 22px 12px;border-bottom:1px solid '+T.ruleSoft+';">' +
+      '<div style="display:flex;align-items:center;gap:4px;max-width:380px;margin:0 auto;">';
+  steps.forEach(function(s, i) {
+    var isActive = i === ci;
+    var isDone   = i < ci;
+    var dotColor = isActive ? T.tomato : isDone ? T.olive : T.inkDim;
+    var dotBg    = (isActive || isDone) ? dotColor : 'transparent';
+    var contentColor = (isActive || isDone) ? '#fff' : dotColor;
+    var dotContent = isDone ? '✓' : (i + 1);
+    var labelColor = isActive ? T.tomato : isDone ? T.olive : T.inkDim;
+    html +=
+      '<div style="display:flex;align-items:center;gap:7px;'+(i < 2 ? 'flex:1;' : 'flex-shrink:0;')+'">' +
+        '<div style="width:22px;height:22px;border-radius:999px;border:1.5px solid '+dotColor+';background:'+dotBg+
+          ';color:'+contentColor+';display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;flex-shrink:0;">' +
+          dotContent +
+        '</div>' +
+        '<div style="font-size:10.5px;font-weight:700;letter-spacing:0.6px;text-transform:uppercase;color:'+labelColor+';">' +
+          s.label +
+        '</div>' +
+        (i < 2 ? '<div style="flex:1;height:2px;background:'+(isDone ? T.olive : T.rule)+';border-radius:999px;margin:0 4px;"></div>' : '') +
+      '</div>';
+  });
+  html += '</div></div>';
+  return html;
+}
+
+function scrollTopReset() {
+  try { window.scrollTo(0, 0); } catch (e) {}
+  try { document.documentElement.scrollTop = 0; } catch (e) {}
+  try { document.body.scrollTop = 0; } catch (e) {}
+}
+
+// ── Receipt review helpers (used by the scan/review sheet) ───────────────
+function moneyInputHTML(id, value, opts) {
+  opts = opts || {};
+  var weight = opts.bold ? '700' : '600';
+  var color = opts.color || T.ink;
+  var v = (parseFloat(value) || 0).toFixed(2);
+  return '<div style="display:inline-flex;align-items:center;gap:1px;background:#FFF8EE;border:1.5px solid '+T.rule+
+    ';border-radius:10px;padding:6px 10px;">' +
+    '<span style="opacity:0.55;font-weight:500;font-size:11px;color:'+T.inkDim+';">$</span>' +
+    '<input type="number" id="'+id+'" class="tab-tnum" value="'+v+'" step="0.01" min="0" oninput="updateReceiptField(this)" data-field="'+id+
+      '" style="width:78px;font-size:13.5px;font-weight:'+weight+';color:'+color+
+      ';border:none;background:transparent;text-align:right;outline:none;padding:0;" />' +
+  '</div>';
+}
+
+function updateReceiptField(el) {
+  var v = parseFloat(el.value) || 0;
+  if (el.id === 'r-tax')   receiptData.tax = v;
+  if (el.id === 'r-tip')   receiptData.tip = v;
+  if (el.id === 'r-total') receiptData.receiptTotal = v;
+  refreshMatchBanner();
+}
+
+function matchBannerHTML() {
+  var sub = (menuItems || []).reduce(function(s, m){ return s + (parseFloat(m.price)||0); }, 0);
+  var tax = parseFloat(receiptData.tax) || 0;
+  var tip = parseFloat(receiptData.tip) || 0;
+  var printed = parseFloat(receiptData.receiptTotal) || 0;
+  if (!printed) {
+    if (!sub && !tax && !tip) return '';
+    return '<div style="padding:10px 12px;background:'+T.paper+';border-radius:12px;font-size:12.5px;color:'+T.inkSoft+';font-weight:500;">' +
+      'No printed total to check against. Make sure items + tax + tip add up to what you paid.' +
+    '</div>';
+  }
+  var sum = sub + tax + tip;
+  var diff = Math.abs(sum - printed);
+  if (diff < 0.10) {
+    return '<div style="padding:10px 12px;background:rgba(95,107,58,0.12);border-radius:12px;font-size:12.5px;color:'+T.olive+';font-weight:700;">✓ Adds up</div>';
+  }
+  return '<div style="padding:10px 12px;background:rgba(242,184,84,0.20);border-radius:12px;font-size:12.5px;color:#854f0b;font-weight:500;line-height:1.4;">' +
+    '⚠ Hmm, this doesn’t add up to the printed total of $'+printed.toFixed(2)+' — off by $'+diff.toFixed(2)+'. Edit any field above.' +
+  '</div>';
+}
+
+function refreshMatchBanner() {
+  var sub = (menuItems || []).reduce(function(s, m){ return s + (parseFloat(m.price)||0); }, 0);
+  receiptData.subtotal = round2(sub);
+  var subEl = document.getElementById('totals-subtotal');
+  if (subEl) subEl.innerHTML = moneyHTML(sub);
+  var bannerEl = document.getElementById('receipt-match-banner');
+  if (bannerEl) bannerEl.innerHTML = matchBannerHTML();
+}
+
+function shareEaterLink() {
+  var url = window.location.origin + window.location.pathname + '?mode=eater&session=' + sessionId;
+  var rest = (currentDinner && currentDinner.restaurant) || 'dinner';
+  var hostFirst = ((currentDinner && currentDinner.hostName) || 'Your friend').split(/\s+/)[0];
+  if (navigator.share) {
+    navigator.share({
+      title: rest,
+      text: hostFirst + ' sent you the bill — tap to claim what you ate 🍝',
+      url: url,
+    }).catch(function() {});
+  } else {
+    copyEaterLink();
+  }
+}
+
 // ── Routing ──────────────────────────────────────────────────────────────
 if (mode === 'eater' && sessionId) {
   showEaterView();
@@ -575,6 +688,7 @@ function renderSignInScreen() {
         '</div>' +
       '</div>' +
     '</div>';
+  scrollTopReset();
 }
 async function signInWithGoogle() {
   var redirectTo = window.location.origin + window.location.pathname;
@@ -781,6 +895,7 @@ function renderTabHome(dinners) {
     '</div>';
 
   document.getElementById('app').innerHTML = html;
+  scrollTopReset();
 }
 
 // ── New dinner form ──────────────────────────────────────────────────────
@@ -823,6 +938,7 @@ function showNewDinnerForm() {
         'Open the tab →' +
       '</button>' +
     '</div>';
+  scrollTopReset();
 }
 function payOptHTML(method) {
   var id = 'pay-' + method.replace(/\s+/g,'');
@@ -894,7 +1010,8 @@ async function showHostDinner() {
   window._dinnerHostName = currentDinner.hostName || '';
   receiptData = currentDinner.receiptData;
   menuItems = currentDinner.menuItems || [];
-  hostSheet = null;
+  // Linear flow: send a fresh dinner straight to scan; confirmed → live claim view
+  hostSheet = (receiptData && receiptData.confirmed) ? null : 'scan';
   listenOrders();
   await refreshOrders();
 }
@@ -927,6 +1044,7 @@ async function refreshOrders() {
 function renderHostSheetForCurrent() {
   if (hostSheet === null)           return renderHostClaim();
   if (hostSheet === 'scan')         return renderHostScanSheet();
+  if (hostSheet === 'share')        return renderHostShareScreen();
   if (hostSheet === 'add-eaters')   return renderHostAddEatersSheet();
   if (hostSheet === 'settle')       return renderHostSettleSheet();
   if (hostSheet === 'mismatch')     return renderHostMismatchScreen();
@@ -945,10 +1063,11 @@ function hostHeaderHTML(opts) {
   opts = opts || {};
   var title = opts.title || (currentDinner ? currentDinner.restaurant : '');
   var sub = opts.sub;
-  var backFn = opts.back || 'showHostDashboard';
+  var backCall = opts.back || 'showHostDashboard';
+  if (backCall.indexOf('(') < 0) backCall += '()';
   var rightHTML = opts.right || '';
   return '<div style="padding:14px 18px 14px;display:flex;align-items:center;gap:10px;">' +
-    '<button class="tab-iconbtn" onclick="'+backFn+'()" aria-label="Back">' +
+    '<button class="tab-iconbtn" onclick="'+backCall+'" aria-label="Back">' +
       '<svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M10 3l-5 5 5 5" stroke="'+T.ink+'" stroke-width="1.8" stroke-linecap="round"/></svg>' +
     '</button>' +
     '<div style="flex:1;min-width:0;">' +
@@ -980,11 +1099,11 @@ function renderHostClaim() {
     : 0;
 
   var rightHeader =
-    '<button class="tab-iconbtn" onclick="setHostSheet(\'scan\')" aria-label="Scan receipt" title="Scan receipt">' +
-      '<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="'+T.ink+'" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>' +
+    '<button class="tab-iconbtn" onclick="setHostSheet(\'scan\')" aria-label="Edit receipt" title="Edit receipt">' +
+      '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="'+T.ink+'" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>' +
     '</button>' +
-    '<button class="tab-iconbtn" style="background:'+T.tomato+';border-color:'+T.tomato+';color:#fff;" onclick="copyEaterLink()" aria-label="Share link" title="Share link">' +
-      '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><line x1="7" y1="17" x2="17" y2="7"/><polyline points="7 7 17 7 17 17"/></svg>' +
+    '<button class="tab-iconbtn" onclick="setHostSheet(\'share\')" aria-label="Re-share link" title="Re-share link">' +
+      '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="'+T.ink+'" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><line x1="14" y1="14" x2="14" y2="21"/><line x1="14" y1="14" x2="21" y2="14"/><line x1="17" y1="17" x2="17" y2="21"/><line x1="21" y1="17" x2="21" y2="21"/></svg>' +
     '</button>';
 
   var headerHTML = hostHeaderHTML({
@@ -1091,9 +1210,10 @@ function renderHostClaim() {
 
   document.getElementById('app').innerHTML =
     '<div class="tab-app tab-fade-in">' +
-      headerHTML + tickerSection + progressSection + bodyHTML + stickyHTML +
+      progressBarHTML('settle') + headerHTML + tickerSection + progressSection + bodyHTML + stickyHTML +
     '</div>';
 
+  scrollTopReset();
   startTicker();
 }
 
@@ -1158,137 +1278,150 @@ async function clearOrders() {
   showToast('Cleared. Open table.');
 }
 
-// ── Scan sheet ──────────────────────────────────────────────────────────
+// ── Scan + review sheet (host step 1) ───────────────────────────────────
 function renderHostScanSheet() {
   if (!currentDinner) return;
   hostSheet = 'scan';
   stopTicker();
+  // Auto-derive subtotal from items so it's always live
+  var derivedSub = (menuItems || []).reduce(function(s, m){ return s + (parseFloat(m.price)||0); }, 0);
+  receiptData.subtotal = round2(derivedSub);
+  var hasScanned = (menuItems || []).length > 0;
+  var hasAnyTotals = derivedSub > 0
+    || (parseFloat(receiptData.tax)   || 0) > 0
+    || (parseFloat(receiptData.tip)   || 0) > 0
+    || (parseFloat(receiptData.receiptTotal) || 0) > 0;
+
   var html = '<div class="tab-app tab-fade-in">';
+  html += progressBarHTML('scan');
   html += hostHeaderHTML({
     title: 'Scan receipt', titleSerif: false,
-    sub: 'Snap a photo or upload from your gallery.',
-    back: 'renderHostClaim',
+    sub: currentDinner.restaurant,
+    back: 'showHostDashboard()',
   });
-  // Step 1
+
+  // 1) Photo upload card
   html +=
     '<div style="padding:0 22px 14px;">' +
       '<div class="tab-card">' +
-        '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">' +
-          '<div style="font-size:11px;font-weight:700;letter-spacing:0.6px;text-transform:uppercase;color:'+T.inkSoft+';">Step 1 — photo</div>' +
-          pillHTML('AI', '#fff', T.olive) +
+        '<div style="display:flex;align-items:center;gap:14px;margin-bottom:14px;">' +
+          '<div style="width:48px;height:48px;border-radius:14px;background:'+T.peachSoft+';display:flex;align-items:center;justify-content:center;font-size:24px;flex-shrink:0;">📷</div>' +
+          '<div style="flex:1;min-width:0;">' +
+            '<div style="font-size:15px;font-weight:700;color:'+T.ink+';letter-spacing:-0.2px;">Snap the receipt</div>' +
+            '<div style="font-size:12px;color:'+T.inkSoft+';margin-top:2px;font-weight:500;">AI reads items, tax & total.</div>' +
+          '</div>' +
         '</div>' +
-        '<input type="file" id="receipt-img" accept="image/*" onchange="scanReceipt()" class="tab-input" style="padding:11px;background:#FFF8EE;" />' +
-        '<div id="scan-status" style="font-size:13px;min-height:20px;margin-top:10px;color:'+T.inkSoft+';"></div>' +
+        '<label for="receipt-img" style="display:block;cursor:pointer;padding:14px 16px;background:#FFF8EE;border:1.5px dashed '+T.rule+';border-radius:14px;text-align:center;">' +
+          (hasScanned
+            ? '<span style="color:'+T.olive+';font-weight:700;font-size:13.5px;">✓ Receipt scanned' + (receiptData._lastFileName ? ' — '+escapeHtml(receiptData._lastFileName) : '') + '</span><br>' +
+              '<span style="color:'+T.inkSoft+';font-size:11.5px;font-weight:500;display:inline-block;margin-top:2px;">Tap to scan a different photo</span>'
+            : '<span style="color:'+T.inkSoft+';font-weight:600;font-size:13.5px;">📂 Take photo or choose from gallery</span>') +
+        '</label>' +
+        '<input type="file" id="receipt-img" accept="image/*" capture="environment" onchange="scanReceipt()" style="display:none;" />' +
+        '<div id="scan-status" style="font-size:13px;margin-top:10px;color:'+T.inkSoft+';"></div>' +
       '</div>' +
     '</div>';
-  // Scanned items
-  if (menuItems.length > 0) {
+
+  // 2) Items + breakdown card
+  if (hasScanned || hasAnyTotals) {
+    html += '<div style="padding:0 22px 14px;"><div class="tab-card">';
     html +=
-      '<div style="padding:0 22px 14px;">' +
-        '<div class="tab-card">' +
-          '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">' +
-            '<div style="font-size:11px;font-weight:700;letter-spacing:0.6px;text-transform:uppercase;color:'+T.inkSoft+';">Scanned items</div>' +
-            '<button onclick="addMenuItem()" class="tab-ghost-btn" style="border:1.5px solid '+T.tomato+';border-radius:999px;padding:4px 11px;">+ Add</button>' +
-          '</div>' +
-          '<div id="menu-items-list">';
-    menuItems.forEach(function(item, idx) {
+      '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">' +
+        '<div style="font-size:11px;font-weight:700;letter-spacing:0.6px;text-transform:uppercase;color:'+T.inkSoft+';">What\'s on the receipt</div>' +
+        '<button onclick="addMenuItem()" class="tab-ghost-btn" style="border:1.5px solid '+T.tomato+';border-radius:999px;padding:4px 11px;">+ Add</button>' +
+      '</div>' +
+      '<div id="menu-items-list">';
+    (menuItems || []).forEach(function(item, idx) {
       html +=
-        '<div class="menu-item-row" id="mrow-'+idx+'" style="display:flex;align-items:center;gap:8px;padding:9px 0;border-bottom:1px solid '+T.ruleSoft+';">' +
-          '<span style="font-size:20px;flex-shrink:0;width:26px;text-align:center;">'+emojiForItem(item.name)+'</span>' +
+        '<div class="menu-item-row" id="mrow-'+idx+'" style="display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid '+T.ruleSoft+';">' +
+          '<span style="font-size:22px;flex-shrink:0;width:28px;text-align:center;">'+emojiForItem(item.name)+'</span>' +
           '<div style="flex:1;min-width:0;">' +
-            '<input type="text" class="menu-item-name" data-idx="'+idx+'" value="'+attr(item.name)+'" oninput="updateMenuItemName(this)" ' +
-              'style="width:100%;font-size:14px;border:none;background:transparent;color:'+T.ink+';font-weight:500;outline:none;" />' +
+            '<input type="text" class="menu-item-name" data-idx="'+idx+'" value="'+attr(item.name)+'" oninput="updateMenuItemName(this)" placeholder="Item name" ' +
+              'style="width:100%;font-size:14.5px;border:none;background:transparent;color:'+T.ink+';font-weight:500;outline:none;padding:0;" />' +
           '</div>' +
-          '<input type="number" class="menu-item-price" data-idx="'+idx+'" value="'+item.price+'" step="0.01" min="0" onchange="updateMenuItemPrice(this)" ' +
-            'style="width:74px;font-size:14px;font-weight:700;color:'+T.tomato+';border:none;background:transparent;text-align:right;outline:none;" />' +
-          '<button onclick="removeMenuItemByIdx('+idx+')" style="background:none;border:none;color:'+T.inkDim+';font-size:18px;cursor:pointer;padding:0 4px;flex-shrink:0;">×</button>' +
+          '<div style="display:inline-flex;align-items:center;gap:1px;">' +
+            '<span style="opacity:0.55;font-weight:500;font-size:11px;color:'+T.inkDim+';">$</span>' +
+            '<input type="number" class="menu-item-price tab-tnum" data-idx="'+idx+'" value="'+(parseFloat(item.price)||0).toFixed(2)+'" step="0.01" min="0" oninput="updateMenuItemPrice(this)" ' +
+              'style="width:62px;font-size:14.5px;font-weight:700;color:'+T.tomato+';border:none;background:transparent;text-align:right;outline:none;padding:0;" />' +
+          '</div>' +
+          '<button onclick="removeMenuItemByIdx('+idx+')" style="background:none;border:none;color:'+T.inkDim+';font-size:18px;cursor:pointer;padding:0 2px;flex-shrink:0;">×</button>' +
         '</div>';
     });
-    var aiSum = menuItems.reduce(function(s,m){ return s+(parseFloat(m.price)||0); }, 0);
-    html +=
-          '</div>' +
-          '<div style="display:flex;justify-content:space-between;padding-top:10px;font-size:13px;font-weight:600;border-top:1.5px solid '+T.rule+';margin-top:4px;">' +
-            '<span style="color:'+T.inkSoft+';">AI total</span><span style="color:'+T.ink+';">$'+aiSum.toFixed(2)+'</span>' +
-          '</div>' +
-        '</div>' +
-      '</div>';
+    if (!hasScanned) {
+      html += '<div style="padding:14px 0;font-size:13px;color:'+T.inkDim+';text-align:center;font-weight:500;">No items yet — scan a receipt above or hit "+ Add".</div>';
+    }
+    html += '</div>';
+
+    // Breakdown
+    html += '<div style="margin-top:14px;padding-top:12px;border-top:1.5px solid '+T.rule+';display:flex;flex-direction:column;gap:9px;font-size:13.5px;">' +
+      '<div style="display:flex;justify-content:space-between;align-items:center;">' +
+        '<span style="color:'+T.inkSoft+';font-weight:500;">Food subtotal</span>' +
+        '<span id="totals-subtotal" style="color:'+T.ink+';font-weight:700;">'+moneyHTML(derivedSub)+'</span>' +
+      '</div>' +
+      '<div style="display:flex;justify-content:space-between;align-items:center;">' +
+        '<span style="color:'+T.inkSoft+';font-weight:500;">Tax</span>' +
+        moneyInputHTML('r-tax', receiptData.tax || 0) +
+      '</div>' +
+      '<div style="display:flex;justify-content:space-between;align-items:center;">' +
+        '<span style="color:'+T.inkSoft+';font-weight:500;">Tip on receipt</span>' +
+        moneyInputHTML('r-tip', receiptData.tip || 0) +
+      '</div>' +
+      '<div style="display:flex;justify-content:space-between;align-items:center;padding-top:8px;border-top:1px solid '+T.ruleSoft+';">' +
+        '<span style="color:'+T.ink+';font-weight:700;">Receipt printed total</span>' +
+        moneyInputHTML('r-total', receiptData.receiptTotal || 0, { bold: true }) +
+      '</div>' +
+    '</div>';
+
+    // Match banner
+    html += '<div id="receipt-match-banner" style="margin-top:12px;">' + matchBannerHTML() + '</div>';
+
+    html += '</div></div>';
   }
-  // Step 2 totals
+
+  // 3) Extra fees / extra tip card
   html +=
     '<div style="padding:0 22px 14px;">' +
       '<div class="tab-card">' +
-        '<div style="font-size:11px;font-weight:700;letter-spacing:0.6px;text-transform:uppercase;color:'+T.inkSoft+';margin-bottom:14px;">Step 2 — totals</div>' +
-        '<div style="margin-bottom:14px;">' +
-          '<label class="tab-label">Food subtotal</label>' +
-          '<input type="number" id="r-subtotal" class="tab-input" placeholder="$0.00" step="0.01" min="0" value="'+(receiptData.subtotal||'')+'" oninput="checkReceiptMatch()" />' +
-        '</div>';
-  if (menuItems.length > 0 && receiptData.subtotal) {
-    var aiSum2 = menuItems.reduce(function(s,m){ return s+(parseFloat(m.price)||0); }, 0);
-    var diff = Math.abs(receiptData.subtotal - aiSum2);
-    if (diff < 0.10) {
-      html += '<div style="margin:-8px 0 14px;padding:10px 12px;background:rgba(95,107,58,0.12);border-radius:12px;font-size:12.5px;color:'+T.olive+';font-weight:600;">✓ Matches AI total of $'+aiSum2.toFixed(2)+'</div>';
-    } else {
-      html += '<div style="margin:-8px 0 14px;padding:10px 12px;background:rgba(242,184,84,0.18);border-radius:12px;font-size:12.5px;color:#854f0b;font-weight:500;">⚠ AI read $'+aiSum2.toFixed(2)+', you entered $'+receiptData.subtotal.toFixed(2)+'. Edit items above.</div>';
-    }
-  }
-  html +=
-        '<div style="margin-bottom:14px;">' +
-          '<label class="tab-label">Tax ($)</label>' +
-          '<input type="number" id="r-tax" class="tab-input" placeholder="$0.00" step="0.01" min="0" value="'+(receiptData.tax||'')+'" />' +
-        '</div>' +
-        '<div style="margin-bottom:14px;">' +
-          '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">' +
-            '<span class="tab-label" style="margin-bottom:0;">Tip</span>' +
-            '<div style="display:flex;gap:6px;">' +
-              '<button type="button" onclick="setTipMode(true)" style="padding:5px 10px;font-size:11.5px;font-weight:600;border-radius:999px;border:1.5px solid '+(receiptData.tipIncluded?T.tomato:T.rule)+';background:'+(receiptData.tipIncluded?'#FFF1EA':'#FFF8EE')+';color:'+(receiptData.tipIncluded?T.tomato:T.inkSoft)+';">Already in</button>' +
-              '<button type="button" onclick="setTipMode(false)" style="padding:5px 10px;font-size:11.5px;font-weight:600;border-radius:999px;border:1.5px solid '+(!receiptData.tipIncluded?T.tomato:T.rule)+';background:'+(!receiptData.tipIncluded?'#FFF1EA':'#FFF8EE')+';color:'+(!receiptData.tipIncluded?T.tomato:T.inkSoft)+';">Add tip</button>' +
-            '</div>' +
-          '</div>';
-  if (receiptData.tipIncluded) {
-    html += '<input type="number" id="r-tip" class="tab-input" placeholder="Tip amount ($)" step="0.01" min="0" value="'+(receiptData.tip||'')+'" />';
-  } else {
-    html += '<div style="display:flex;gap:8px;margin-bottom:8px;">';
-    [15,18,20,25].forEach(function(p) {
-      var active = receiptData.tipPct === p;
-      html += '<button onclick="setReceiptTip('+p+')" style="flex:1;padding:9px;border-radius:12px;font-size:13px;font-weight:600;border:1.5px solid '+(active?T.tomato:T.rule)+';background:'+(active?'#FFF1EA':'#FFF8EE')+';color:'+(active?T.tomato:T.inkSoft)+';">'+p+'%</button>';
-    });
-    html += '</div>';
-    html += '<input type="number" id="r-tip-pct" class="tab-input" placeholder="Custom %" step="1" min="0" max="100" value="'+(receiptData.tipPct||20)+'" oninput="updateTipFromPct()" />';
-  }
-  html +=
-        '</div>' +
-        '<div style="margin-bottom:14px;">' +
-          '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">' +
-            '<span class="tab-label" style="margin-bottom:0;">Extra fees</span>' +
-            '<button onclick="addFee()" class="tab-ghost-btn" style="border:1.5px solid '+T.tomato+';border-radius:999px;padding:4px 11px;">+ Add fee</button>' +
+        '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;gap:14px;">' +
+          '<div style="min-width:0;">' +
+            '<div style="font-size:14.5px;font-weight:700;color:'+T.ink+';letter-spacing:-0.2px;">Any other fees or extra tip?</div>' +
+            '<div style="font-size:11.5px;color:'+T.inkSoft+';margin-top:2px;font-weight:500;">Optional — corkage, service fee, extra tip on top.</div>' +
           '</div>' +
-          '<div id="fees-list"></div>' +
+          '<button onclick="addFee()" class="tab-ghost-btn" style="border:1.5px solid '+T.tomato+';border-radius:999px;padding:4px 11px;flex-shrink:0;">+ Add</button>' +
         '</div>' +
-        '<button class="tab-grad-btn" style="width:100%;justify-content:center;" onclick="confirmReceiptTotals()">Confirm receipt →</button>';
-  if (receiptData.confirmed) {
-    html += '<div style="margin-top:12px;padding:12px;background:rgba(95,107,58,0.12);border-radius:12px;font-size:13px;color:'+T.olive+';font-weight:600;text-align:center;">✓ Confirmed — share the eater link</div>';
-    if (menuItems.length > 0) {
-      html += '<button class="tab-outline-btn" style="margin-top:10px;width:100%;" onclick="sendMenuToEaters()">Re-send menu to eaters</button>';
-    }
-  }
-  html += '</div></div>';
-  html += '</div>';
+        '<div id="fees-list" style="margin-top:10px;"></div>' +
+      '</div>' +
+    '</div>';
 
+  // 4) Confirm
+  html +=
+    '<div style="padding:0 22px 14px;">' +
+      '<button class="tab-grad-btn" style="width:100%;justify-content:center;padding:16px;" onclick="confirmReceiptTotals()">Confirm & open the tab →</button>' +
+    '</div>';
+
+  // 5) Manual-entry fallback (demoted)
+  html +=
+    '<div style="padding:6px 22px 60px;text-align:center;">' +
+      '<button onclick="setHostSheet(\'add-eaters\')" class="tab-ghost-btn" style="font-size:12.5px;color:'+T.inkSoft+';font-weight:600;">No receipt? Add items manually</button>' +
+    '</div>';
+
+  html += '</div>';
   document.getElementById('app').innerHTML = html;
+  scrollTopReset();
   (receiptData.fees || []).forEach(function(_, idx) { renderFeeRow(idx); });
 }
 
 function scanReceipt() {
-  var file = document.getElementById('receipt-img').files[0];
+  var inp = document.getElementById('receipt-img');
+  var file = inp && inp.files[0];
   if (!file) return;
+  receiptData._lastFileName = file.name;
   var status = document.getElementById('scan-status');
-  if (!document.getElementById('spin-style')) {
-    var st = document.createElement('style');
-    st.id = 'spin-style';
-    st.textContent = '@keyframes spin { to { transform: rotate(360deg); } }';
-    document.head.appendChild(st);
-  }
-  status.innerHTML = '<div style="display:flex;align-items:center;gap:10px;color:'+T.tomato+';font-weight:600;"><div style="width:18px;height:18px;border:2px solid '+T.tomato+';border-top-color:transparent;border-radius:50%;animation:spin 0.8s linear infinite;flex-shrink:0;"></div>Reading receipt…</div>';
+  if (status) status.innerHTML =
+    '<div style="display:flex;align-items:center;gap:10px;color:'+T.tomato+';font-weight:600;">' +
+      '<div style="width:18px;height:18px;border:2px solid '+T.tomato+';border-top-color:transparent;border-radius:50%;animation:spin 0.8s linear infinite;flex-shrink:0;"></div>' +
+      'Reading receipt…' +
+    '</div>';
 
   var img = new Image();
   var objectUrl = URL.createObjectURL(file);
@@ -1319,12 +1452,15 @@ function scanReceipt() {
       var totalsRes = results[0];
       var itemsRes  = results[1];
 
-      if (totalsRes.success && totalsRes.data) {
-        if (totalsRes.data.subtotal) receiptData.subtotal = parseFloat(totalsRes.data.subtotal);
-        if (totalsRes.data.tax)      receiptData.tax      = parseFloat(totalsRes.data.tax);
+      if (totalsRes && totalsRes.success && totalsRes.data) {
+        var d = totalsRes.data;
+        if (d.subtotal != null) receiptData.subtotal     = parseFloat(d.subtotal);
+        if (d.tax      != null) receiptData.tax          = parseFloat(d.tax);
+        if (d.tip      != null) receiptData.tip          = parseFloat(d.tip);
+        if (d.total    != null) receiptData.receiptTotal = parseFloat(d.total);
       }
 
-      if (itemsRes.success && itemsRes.data && itemsRes.data.length > 0) {
+      if (itemsRes && itemsRes.success && itemsRes.data && itemsRes.data.length > 0) {
         var expanded = [];
         itemsRes.data.forEach(function(item) {
           var qty = item.qty || 1;
@@ -1333,14 +1469,11 @@ function scanReceipt() {
           }
         });
         menuItems = expanded;
-        status.innerHTML = '<span style="color:'+T.olive+';font-weight:600;">✓ Found '+expanded.length+' items and totals — review below.</span>';
-      } else {
-        status.innerHTML = '<span style="color:'+T.inkSoft+';">Could not read items — enter totals manually.</span>';
-        if (totalsRes.success) status.innerHTML += ' <span style="color:'+T.olive+';">Totals auto-filled.</span>';
       }
       renderHostScanSheet();
     }).catch(function(e) {
-      status.innerHTML = '<span style="color:'+T.tomato+';">Error: '+escapeHtml(e.message || e)+'</span>';
+      var st = document.getElementById('scan-status');
+      if (st) st.innerHTML = '<span style="color:'+T.tomato+';">Error: '+escapeHtml(e.message || e)+'</span>';
     });
   };
   img.src = objectUrl;
@@ -1352,24 +1485,21 @@ function updateMenuItemName(el) {
 }
 function updateMenuItemPrice(el) {
   var idx = parseInt(el.dataset.idx);
-  if (menuItems[idx]) { menuItems[idx].price = parseFloat(el.value) || 0; checkReceiptMatch(); }
+  if (menuItems[idx]) {
+    menuItems[idx].price = parseFloat(el.value) || 0;
+    refreshMatchBanner();
+  }
 }
 function removeMenuItemByIdx(idx) {
   menuItems.splice(idx, 1);
   renderHostScanSheet();
 }
-function setTipMode(included) {
-  receiptData.tipIncluded = included;
-  renderHostScanSheet();
-}
-function setReceiptTip(pct) {
-  receiptData.tipPct = pct;
-  renderHostScanSheet();
-}
-function updateTipFromPct() {
-  var pctEl = document.getElementById('r-tip-pct');
-  if (pctEl) receiptData.tipPct = parseFloat(pctEl.value) || 0;
-}
+// Legacy stubs (kept so any saved-state references don't blow up)
+function setTipMode(included) { receiptData.tipIncluded = !!included; }
+function setReceiptTip(pct)   { receiptData.tipPct = pct; }
+function updateTipFromPct()   {}
+function checkReceiptMatch()  { refreshMatchBanner(); }
+
 function addFee() {
   receiptData.fees = receiptData.fees || [];
   receiptData.fees.push({ name: '', amount: 0, split: 'everyone', person: '' });
@@ -1379,15 +1509,18 @@ function renderFeeRow(idx) {
   var list = document.getElementById('fees-list');
   if (!list) return;
   var fee = receiptData.fees[idx];
-  var eaterNames = orders.map(function(o) { return o.name; });
+  var eaterNames = orders.map(function(o){ return o.name; });
   var personOpts = eaterNames.map(function(n) {
     return '<option value="'+attr(n)+'"'+(fee.person===n?' selected':'')+'>'+escapeHtml(n)+'</option>';
   }).join('');
   var div = document.createElement('div');
-  div.style.cssText = 'display:flex;gap:8px;align-items:center;margin-bottom:8px;';
+  div.style.cssText = 'display:flex;gap:8px;align-items:center;margin-bottom:8px;flex-wrap:wrap;';
   div.innerHTML =
-    '<input type="text" placeholder="Fee name" value="'+attr(fee.name||'')+'" data-idx="'+idx+'" data-field="name" oninput="updateFeeEl(this)" style="flex:1;font-size:13px;padding:9px 10px;border:1.5px solid '+T.rule+';border-radius:10px;background:#FFF8EE;" />' +
-    '<input type="number" placeholder="$0" step="0.01" min="0" value="'+(fee.amount||'')+'" data-idx="'+idx+'" data-field="amount" oninput="updateFeeEl(this)" style="width:70px;font-size:13px;padding:9px 10px;border:1.5px solid '+T.rule+';border-radius:10px;background:#FFF8EE;" />' +
+    '<input type="text" placeholder="Fee name (e.g. corkage)" value="'+attr(fee.name||'')+'" data-idx="'+idx+'" data-field="name" oninput="updateFeeEl(this)" style="flex:1;min-width:140px;font-size:13px;padding:9px 10px;border:1.5px solid '+T.rule+';border-radius:10px;background:#FFF8EE;" />' +
+    '<div style="display:inline-flex;align-items:center;gap:1px;background:#FFF8EE;border:1.5px solid '+T.rule+';border-radius:10px;padding:7px 10px;">' +
+      '<span style="opacity:0.55;font-weight:500;font-size:11px;color:'+T.inkDim+';">$</span>' +
+      '<input type="number" placeholder="0.00" step="0.01" min="0" value="'+(fee.amount?parseFloat(fee.amount).toFixed(2):'')+'" data-idx="'+idx+'" data-field="amount" oninput="updateFeeEl(this)" style="width:62px;font-size:13px;font-weight:600;color:'+T.ink+';border:none;background:transparent;text-align:right;outline:none;padding:0;" />' +
+    '</div>' +
     '<select data-idx="'+idx+'" data-field="split" onchange="updateFeeEl(this)" style="font-size:12px;padding:9px;border:1.5px solid '+T.rule+';border-radius:10px;background:#FFF8EE;">' +
       '<option value="everyone"'+(fee.split==='everyone'?' selected':'')+'>Split evenly</option>' +
       '<option value="person"'+(fee.split==='person'?' selected':'')+'>Assign to…</option>' +
@@ -1409,55 +1542,101 @@ function removeFee(idx) {
   receiptData.fees.splice(parseInt(idx), 1);
   renderHostScanSheet();
 }
-function checkReceiptMatch() {
-  var el = document.getElementById('r-subtotal');
-  if (!el) return;
-  receiptData.subtotal = parseFloat(el.value) || 0;
-}
 
 async function confirmReceiptTotals() {
-  var subtotal = parseFloat((document.getElementById('r-subtotal') || {}).value) || 0;
-  var tax      = parseFloat((document.getElementById('r-tax')      || {}).value) || 0;
-  if (!subtotal) { showToast('Enter the food subtotal first'); return; }
-  var tip = 0;
-  if (receiptData.tipIncluded) {
-    tip = parseFloat((document.getElementById('r-tip') || {}).value) || 0;
-  } else {
-    var pct = parseFloat((document.getElementById('r-tip-pct') || {}).value) || receiptData.tipPct || 20;
-    tip = (subtotal + tax) * pct / 100;
-    receiptData.tipPct = pct;
-  }
-  receiptData.subtotal = subtotal;
+  var sub = (menuItems || []).reduce(function(s, m){ return s + (parseFloat(m.price)||0); }, 0);
+  var tax = parseFloat(receiptData.tax) || 0;
+  var tip = parseFloat(receiptData.tip) || 0;
+  if (!sub && !tax && !tip) { showToast('Add items or amounts first'); return; }
+  receiptData.subtotal = round2(sub);
   receiptData.tax = tax;
   receiptData.tip = tip;
   receiptData.confirmed = true;
-  var res = await supabase.from('dinners').update({
-    receipt_data: receiptData, menu_items: menuItems,
-  }).eq('id', sessionId);
+  var update = { receipt_data: receiptData, menu_items: menuItems };
+  if (menuItems && menuItems.length > 0) update.menu_sent_at = new Date().toISOString();
+  var res = await supabase.from('dinners').update(update).eq('id', sessionId);
   if (res.error) { alert('Error: ' + res.error.message); return; }
-  showToast('Receipt confirmed ✓');
-  renderHostScanSheet();
+  setHostSheet('share');
 }
 
 async function sendMenuToEaters() {
-  if (menuItems.length === 0) { showToast('No items to send'); return; }
+  if (!menuItems || menuItems.length === 0) { showToast('No items to send'); return; }
   var res = await supabase.from('dinners').update({
     menu_items: menuItems,
     menu_sent_at: new Date().toISOString(),
   }).eq('id', sessionId);
   if (res.error) { showToast('Error: ' + res.error.message); return; }
-  showToast('Menu sent to eaters ✨');
+  showToast('Menu sent ✨');
+}
+
+// ── "Tab is open!" share screen (host step 2) ───────────────────────────
+function renderHostShareScreen() {
+  if (!currentDinner) return;
+  hostSheet = 'share';
+  stopTicker();
+  var eaterUrl = window.location.origin + window.location.pathname + '?mode=eater&session=' + sessionId;
+  var html = '<div class="tab-app tab-fade-in" style="padding-bottom:48px;">';
+  html += progressBarHTML('share');
+  html += hostHeaderHTML({
+    title: currentDinner.restaurant, titleSerif: true,
+    back: 'setHostSheet(\'scan\')',
+  });
+  html +=
+    '<div style="padding:8px 22px 4px;text-align:center;">' +
+      '<div style="font-size:54px;line-height:1;margin-bottom:10px;">🎉</div>' +
+      '<div style="font-family:'+T.sans+';font-size:42px;font-weight:700;letter-spacing:-1.4px;line-height:1;color:'+T.ink+';">Tab is open!</div>' +
+      '<div style="margin-top:10px;font-size:14.5px;color:'+T.inkSoft+';font-weight:500;line-height:1.4;">Share it with the table 👇</div>' +
+    '</div>' +
+    '<div style="padding:18px 22px 20px;display:flex;justify-content:center;">' +
+      '<div style="background:'+T.cream+';border:2px solid '+T.paper+';border-radius:28px;padding:22px;box-shadow:0 24px 48px -20px rgba(42,22,16,0.20), 0 8px 16px -8px rgba(42,22,16,0.10);">' +
+        '<div id="qr-host" style="display:flex;align-items:center;justify-content:center;width:220px;height:220px;"></div>' +
+      '</div>' +
+    '</div>' +
+    '<div style="padding:0 22px;display:flex;flex-direction:column;gap:10px;">' +
+      '<button class="tab-grad-btn" style="width:100%;justify-content:center;padding:16px;" onclick="shareEaterLink()">' +
+        '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>' +
+        'Share link →' +
+      '</button>' +
+      '<button class="tab-outline-btn" style="width:100%;" onclick="copyEaterLink()">📎 Copy link</button>' +
+      '<button class="tab-ghost-btn" style="margin-top:6px;padding:12px;font-weight:600;font-size:13.5px;color:'+T.inkSoft+';" onclick="setHostSheet(null)">Done — go to tab</button>' +
+    '</div>' +
+    '<div style="padding:18px 24px 0;text-align:center;font-size:11.5px;color:'+T.inkDim+';font-weight:500;word-break:break-all;">'+escapeHtml(eaterUrl)+'</div>' +
+  '</div>';
+  document.getElementById('app').innerHTML = html;
+  scrollTopReset();
+  // QR render — small async so the node is in the DOM
+  setTimeout(function() {
+    var qrEl = document.getElementById('qr-host');
+    if (!qrEl) return;
+    qrEl.innerHTML = '';
+    if (window.QRCode) {
+      try {
+        new window.QRCode(qrEl, {
+          text: eaterUrl, width: 220, height: 220,
+          colorDark: T.espresso, colorLight: T.cream,
+          correctLevel: window.QRCode.CorrectLevel.M,
+        });
+      } catch (e) {
+        qrEl.innerHTML = '<div style="font-size:12px;color:'+T.inkSoft+';">Couldn’t draw QR — use Copy link.</div>';
+      }
+    } else {
+      qrEl.innerHTML = '<div style="font-size:12px;color:'+T.inkSoft+';">QR loading… use Copy link.</div>';
+    }
+  }, 30);
 }
 
 // ── Add eaters manually sheet ───────────────────────────────────────────
 function renderHostAddEatersSheet() {
   hostSheet = 'add-eaters';
   stopTicker();
+  var backTarget = (receiptData && receiptData.confirmed) ? 'renderHostClaim()' : 'setHostSheet(\'scan\')';
+  var phaseStep = (receiptData && receiptData.confirmed) ? 'settle' : 'scan';
   var html = '<div class="tab-app tab-fade-in">';
+  html += progressBarHTML(phaseStep);
   html += hostHeaderHTML({
     title: 'Add eaters', titleSerif: false,
     sub: 'Type in who got what.',
-    back: 'renderHostClaim',
+    back: backTarget,
   });
   html +=
     '<div style="padding:0 22px 200px;">' +
@@ -1469,6 +1648,7 @@ function renderHostAddEatersSheet() {
       '</div>' +
     '</div></div>';
   document.getElementById('app').innerHTML = html;
+  scrollTopReset();
   personCount = 0;
   addPersonEntry();
   if (window._dinnerHostName) {
@@ -1597,6 +1777,7 @@ function renderHostEditOrderSheet() {
     ? ' <span class="tab-pill" style="background:'+T.tomato+';color:#fff;font-size:9.5px;">HOST</span>'
     : '';
   var html = '<div class="tab-app tab-fade-in">';
+  html += progressBarHTML('settle');
   html += hostHeaderHTML({
     title: 'Edit ' + order.name + hostBadge, titleSerif: false,
     sub: 'Tweak items, then save.',
@@ -1612,6 +1793,7 @@ function renderHostEditOrderSheet() {
       '</div>' +
     '</div></div>';
   document.getElementById('app').innerHTML = html;
+  scrollTopReset();
 }
 function addEditItem() {
   editItemCount++;
@@ -1660,16 +1842,19 @@ function renderHostSettleSheet() {
   if (!receiptData || !receiptData.confirmed) {
     document.getElementById('app').innerHTML =
       '<div class="tab-app tab-fade-in">' +
+        progressBarHTML('settle') +
         hostHeaderHTML({ title: 'Settle up', titleSerif: false, back: 'renderHostClaim' }) +
         '<div style="padding:0 22px;"><div class="tab-card" style="padding:24px;text-align:center;color:'+T.tomato+';font-weight:500;">Confirm the receipt first.</div></div>' +
       '</div>';
+    scrollTopReset();
     return;
   }
   var feesTotal = (receiptData.fees || []).reduce(function(s,f){ return s+(f.amount||0); }, 0);
   var grandTotal = (receiptData.subtotal||0) + (receiptData.tax||0) + (receiptData.tip||0) + feesTotal;
-  var tipLabel = receiptData.tipIncluded ? 'Included' : ((receiptData.tipPct || 0) + '%');
+  var tipLabel = (receiptData.tip > 0) ? 'on receipt' : 'none';
 
   var html = '<div class="tab-app tab-fade-in">';
+  html += progressBarHTML('settle');
   html += hostHeaderHTML({
     title: 'Tonight’s tab', titleSerif: false,
     sub: currentDinner.restaurant,
@@ -1779,6 +1964,7 @@ function renderHostSettleSheet() {
 
   html += '</div>';
   document.getElementById('app').innerHTML = html;
+  scrollTopReset();
 }
 function rowHTML(label, val) {
   return '<div style="display:flex;justify-content:space-between;padding:3px 0;"><span>'+label+'</span><span style="font-weight:600;color:'+T.ink+';">'+val+'</span></div>';
@@ -1830,6 +2016,7 @@ function renderHostMismatchScreen() {
   var gapAbs = Math.abs(p.gap);
   document.getElementById('app').innerHTML =
     '<div class="tab-app tab-fade-in" style="padding:0;display:flex;flex-direction:column;min-height:100vh;">' +
+      progressBarHTML('settle') +
       '<div style="position:relative;background:'+HERO_GRAD+';color:#FFF6EC;padding:28px 26px 80px;border-bottom-left-radius:36px;border-bottom-right-radius:36px;overflow:hidden;">' +
         '<div style="position:absolute;top:-80px;right:-50px;width:240px;height:240px;border-radius:999px;background:radial-gradient(circle, rgba(255,220,160,0.55), transparent 70%);"></div>' +
         '<div style="position:relative;">' +
@@ -1864,6 +2051,7 @@ function renderHostMismatchScreen() {
         '<button class="tab-outline-btn" style="margin-top:8px;" onclick="setHostSheet(\'settle\')">Back to settle</button>' +
       '</div>' +
     '</div>';
+  scrollTopReset();
 }
 
 async function notifyEaters() {
@@ -1907,10 +2095,11 @@ function renderHostPaidSheet() {
   var notified = orders.filter(function(o){ return o.finalOwes || o.isHost; });
   var hostResult = lastResults ? lastResults.find(function(r){ return r.isHost; }) : null;
   var html = '<div class="tab-app tab-fade-in">';
+  html += progressBarHTML('settle');
   html += hostHeaderHTML({
     title: 'Who’s paid', titleSerif: false,
     sub: notified.length + ' on the tab',
-    back: 'renderHostClaim',
+    back: 'setHostSheet(\'settle\')',
   });
   if (notified.length === 0) {
     html += '<div style="padding:0 22px;"><div class="tab-card" style="padding:30px;text-align:center;color:'+T.inkSoft+';">Send totals from the settle screen first.</div></div>';
@@ -1959,6 +2148,7 @@ function renderHostPaidSheet() {
   }
   html += '</div>';
   document.getElementById('app').innerHTML = html;
+  scrollTopReset();
 }
 function togglePaid(name) {
   paidStatus[name] = !paidStatus[name];
@@ -2116,6 +2306,7 @@ function renderEaterStage(animate) {
     '<div class="' + cls + '" style="padding:0 0 200px;position:relative;">' +
       hero + body + bottomBar +
     '</div>';
+  scrollTopReset();
 
   // Side effects
   if (eaterStage === 'claiming') {
@@ -2542,10 +2733,10 @@ Object.assign(window, {
   // Dashboard / dinner CRUD
   showHostDashboard, showNewDinnerForm, selectPay, createDinner, deleteDinner, goToHostDinner,
   // Host dinner navigation
-  setHostSheet, renderHostClaim, copyEaterLink, clearOrders, toggleHostItemClaim,
+  setHostSheet, renderHostClaim, copyEaterLink, shareEaterLink, clearOrders, toggleHostItemClaim,
   // Scan sheet
   scanReceipt, updateMenuItemName, updateMenuItemPrice, removeMenuItemByIdx, addMenuItem,
-  setTipMode, setReceiptTip, updateTipFromPct,
+  setTipMode, setReceiptTip, updateTipFromPct, updateReceiptField,
   addFee, updateFeeEl, removeFee, checkReceiptMatch,
   confirmReceiptTotals, sendMenuToEaters,
   // Add-eaters sheet
