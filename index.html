@@ -178,6 +178,7 @@ var currentUser = null;
 var currentDinner = null;
 var dashboardDinners = [];
 var orders = [];
+var participants = [];
 var menuItems = [];
 var receiptData = { subtotal: 0, tax: 0, tip: 0, fees: [], confirmed: false };
 var dashboardChannel = null, dinnerChannel = null, eaterChannel = null;
@@ -278,6 +279,15 @@ async function fetchOrdersForDinner(id) {
   if (res.error) { console.error(res.error); return []; }
   return (res.data || []).map(normalizeOrder);
 }
+async function fetchParticipants(id) {
+  var res = await supabase
+    .from('participants')
+    .select('id, name, joined_at, has_picked, picked_at')
+    .eq('dinner_id', id)
+    .order('joined_at', { ascending: true });
+  if (res.error) { console.error(res.error); return []; }
+  return res.data || [];
+}
 async function removeChannelSafe(ch) {
   if (!ch) return;
   try { await supabase.removeChannel(ch); } catch (e) {}
@@ -375,6 +385,50 @@ function avatarStackHTML(names, opts) {
   html += '</div>';
   return html;
 }
+function avatarHTMLWithCheck(name, opts) {
+  opts = opts || {};
+  var size = opts.size || 28;
+  var picked = !!opts.picked;
+  var ring = opts.ring || T.cream;
+  var p = avatarFor(name);
+  var dim = picked ? '' : 'opacity:0.55;';
+  var html = '<div style="position:relative;display:inline-block;width:'+size+'px;height:'+size+'px;flex-shrink:0;">' +
+    '<div style="width:'+size+'px;height:'+size+'px;border-radius:999px;background:'+p.tone+';color:#fff;display:flex;align-items:center;justify-content:center;font-family:'+T.sans+';font-weight:600;font-size:'+(size*0.42).toFixed(1)+'px;letter-spacing:0.2px;'+dim+(ring?'box-shadow:0 0 0 2px '+ring+';':'')+'">'+escapeHtml(p.initial)+'</div>';
+  if (picked) {
+    var bs = Math.max(11, Math.round(size * 0.46));
+    html += '<div style="position:absolute;bottom:-2px;right:-2px;width:'+bs+'px;height:'+bs+'px;border-radius:999px;background:'+T.olive+';color:#fff;display:flex;align-items:center;justify-content:center;font-size:'+Math.max(8, Math.round(bs*0.58))+'px;font-weight:800;box-shadow:0 0 0 2px '+ring+';line-height:1;">✓</div>';
+  }
+  html += '</div>';
+  return html;
+}
+function participantsStackHTML(parts, opts) {
+  opts = opts || {};
+  var size = opts.size || 26;
+  var max  = opts.max  || 4;
+  var ring = opts.ring || T.cream;
+  // Picked first, then joined-only
+  var sorted = parts.slice().sort(function(a, b) {
+    return (b.has_picked ? 1 : 0) - (a.has_picked ? 1 : 0);
+  });
+  var shown = sorted.slice(0, max);
+  var rest = Math.max(0, sorted.length - shown.length);
+  var html = '<div style="display:inline-flex;align-items:center;">';
+  for (var i = 0; i < shown.length; i++) {
+    var margin = i === 0 ? 0 : -size*0.32;
+    html += '<div style="margin-left:'+margin+'px;">' +
+      avatarHTMLWithCheck(shown[i].name, { size: size, picked: !!shown[i].has_picked, ring: ring }) +
+    '</div>';
+  }
+  if (rest > 0) {
+    html += '<div style="margin-left:'+(-size*0.32).toFixed(1)+'px;width:'+size+'px;height:'+size+
+      'px;border-radius:999px;background:'+T.cream+';color:'+T.ink+
+      ';display:flex;align-items:center;justify-content:center;font-family:'+T.sans+
+      ';font-size:'+(size*0.38).toFixed(1)+'px;font-weight:600;box-shadow:0 0 0 2px '+ring+
+      ', inset 0 0 0 1.5px '+T.ink+';">+'+rest+'</div>';
+  }
+  html += '</div>';
+  return html;
+}
 function moneyHTML(amount, opts) {
   opts = opts || {};
   var big = !!opts.big;
@@ -424,22 +478,25 @@ function tickerLines() {
   return lines;
 }
 function tickerHTML() {
-  var picked = orders.map(function(o){ return o.name; });
-  var pickedCount = picked.length;
-  if (pickedCount === 0) {
+  var joinedCount = participants.length;
+  var pickedCount = participants.filter(function(p){ return p.has_picked; }).length;
+  if (joinedCount === 0) {
     return '<div style="background:'+T.paper+';border-radius:18px;padding:14px 16px;border:1px solid '+T.rule+
       ';display:flex;align-items:center;gap:12px;color:'+T.inkSoft+';font-size:13.5px;font-weight:500;">' +
       '<span style="font-size:20px;">👥</span>' +
-      '<span>Nobody’s picked yet — share the link 📎</span>' +
+      '<span>Nobody’s joined yet — share the link 📎</span>' +
     '</div>';
   }
   var lines = tickerLines();
   var hasTicker = lines.length > 0;
   return '<div id="tab-ticker" style="background:'+T.paper+';border-radius:18px;padding:12px 14px;border:1px solid '+T.rule+';">' +
     '<div style="display:flex;align-items:center;gap:10px;">' +
-      avatarStackHTML(picked, { size: 24, max: 5, ring: T.paper }) +
-      '<div style="font-size:13.5px;font-weight:600;color:'+T.ink+';flex:1;min-width:0;">' +
-        pickedCount + ' picked their items' +
+      participantsStackHTML(participants, { size: 24, max: 5, ring: T.paper }) +
+      '<div style="font-size:13.5px;font-weight:600;color:'+T.ink+';flex:1;min-width:0;line-height:1.25;">' +
+        '<span style="color:'+T.ink+';">'+joinedCount+'</span>' +
+        '<span style="color:'+T.inkSoft+';font-weight:500;"> joined · </span>' +
+        '<span style="color:'+T.olive+';">'+pickedCount+'</span>' +
+        '<span style="color:'+T.inkSoft+';font-weight:500;"> picked</span>' +
       '</div>' +
       '<span style="width:7px;height:7px;border-radius:999px;background:'+T.tomato+
       ';box-shadow:0 0 0 3px rgba(229,75,60,0.18);animation:tabPulse 1.6s ease-in-out infinite;flex-shrink:0;" aria-label="Live"></span>' +
@@ -535,7 +592,7 @@ function liveDinnerFromList(dinners) {
   return null;
 }
 
-// ── Linear host-journey progress bar ─────────────────────────────────────
+// ── Linear host-journey progress bar (tappable + gated) ────────────────
 function progressBarHTML(step) {
   var steps = [
     { key: 'scan',   label: 'Scan'   },
@@ -545,6 +602,10 @@ function progressBarHTML(step) {
   var order = { scan: 0, share: 1, settle: 2 };
   var ci = order[step];
   if (ci == null) return '';
+  // Gating
+  var receiptOK = !!(receiptData && receiptData.confirmed);
+  var anyPicks = participants.some(function(p){ return p.has_picked; }) || orders.length > 0;
+  var enabled = { scan: true, share: receiptOK, settle: receiptOK && anyPicks };
   var html =
     '<div style="position:sticky;top:0;left:0;right:0;background:'+T.cream+
     ';z-index:30;padding:14px 22px 12px;border-bottom:1px solid '+T.ruleSoft+';">' +
@@ -552,13 +613,19 @@ function progressBarHTML(step) {
   steps.forEach(function(s, i) {
     var isActive = i === ci;
     var isDone   = i < ci;
-    var dotColor = isActive ? T.tomato : isDone ? T.olive : T.inkDim;
+    var isEnabled = enabled[s.key];
+    var canTap = isEnabled && !isActive;
+    var dotColor = isActive ? T.tomato : isDone ? T.olive : (isEnabled ? T.inkSoft : T.inkDim);
     var dotBg    = (isActive || isDone) ? dotColor : 'transparent';
     var contentColor = (isActive || isDone) ? '#fff' : dotColor;
     var dotContent = isDone ? '✓' : (i + 1);
-    var labelColor = isActive ? T.tomato : isDone ? T.olive : T.inkDim;
+    var labelColor = isActive ? T.tomato : isDone ? T.olive : (isEnabled ? T.inkSoft : T.inkDim);
+    var opacity = isEnabled ? '1' : '0.55';
+    var cursor  = canTap ? 'pointer' : (isActive ? 'default' : 'not-allowed');
+    var tapAttr = canTap ? ' onclick="navigateToStep(\''+s.key+'\')"' : '';
     html +=
-      '<div style="display:flex;align-items:center;gap:7px;'+(i < 2 ? 'flex:1;' : 'flex-shrink:0;')+'">' +
+      '<div'+tapAttr+' role="button" aria-disabled="'+(!isEnabled)+'" style="display:flex;align-items:center;gap:7px;cursor:'+cursor+';opacity:'+opacity+';' +
+        (i < 2 ? 'flex:1;' : 'flex-shrink:0;')+'-webkit-tap-highlight-color:transparent;">' +
         '<div style="width:22px;height:22px;border-radius:999px;border:1.5px solid '+dotColor+';background:'+dotBg+
           ';color:'+contentColor+';display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;flex-shrink:0;">' +
           dotContent +
@@ -566,11 +633,27 @@ function progressBarHTML(step) {
         '<div style="font-size:10.5px;font-weight:700;letter-spacing:0.6px;text-transform:uppercase;color:'+labelColor+';">' +
           s.label +
         '</div>' +
-        (i < 2 ? '<div style="flex:1;height:2px;background:'+(isDone ? T.olive : T.rule)+';border-radius:999px;margin:0 4px;"></div>' : '') +
-      '</div>';
+      '</div>' +
+      (i < 2 ? '<div style="flex:1;height:2px;background:'+(isDone ? T.olive : T.rule)+';border-radius:999px;margin:0 4px;"></div>' : '');
   });
   html += '</div></div>';
   return html;
+}
+
+function navigateToStep(step) {
+  if (step === 'scan')  return setHostSheet('scan');
+  if (step === 'share') {
+    if (!(receiptData && receiptData.confirmed)) { showToast('Confirm the receipt first'); return; }
+    return setHostSheet('share');
+  }
+  if (step === 'settle') {
+    if (!(receiptData && receiptData.confirmed)) { showToast('Confirm the receipt first'); return; }
+    if (!(participants.some(function(p){ return p.has_picked; }) || orders.length > 0)) {
+      showToast('Wait on the first pick');
+      return;
+    }
+    return setHostSheet(null);
+  }
 }
 
 function scrollTopReset() {
@@ -641,10 +724,18 @@ function shareEaterLink() {
       title: rest,
       text: hostFirst + ' sent you the bill — tap to claim what you ate 🍝',
       url: url,
+    }).then(function() {
+      // Auto-advance to the live claim view after a successful share
+      if (hostSheet === 'share') setTimeout(function() { setHostSheet(null); }, 400);
     }).catch(function() {});
   } else {
     copyEaterLink();
+    if (hostSheet === 'share') setTimeout(function() { setHostSheet(null); }, 600);
   }
+}
+function copyEaterLinkFromShare() {
+  copyEaterLink();
+  setTimeout(function() { setHostSheet(null); }, 600);
 }
 
 // ── Routing ──────────────────────────────────────────────────────────────
@@ -1072,6 +1163,10 @@ async function showHostDinner() {
   menuItems = currentDinner.menuItems || [];
   // Linear flow: send a fresh dinner straight to scan; confirmed → live claim view
   hostSheet = (receiptData && receiptData.confirmed) ? null : 'scan';
+  // Host is automatically a participant (idempotent)
+  if (currentDinner.hostName) {
+    supabase.rpc('join_dinner', { p_dinner_id: sessionId, p_name: currentDinner.hostName }).catch(function() {});
+  }
   listenOrders();
   await refreshOrders();
 }
@@ -1080,8 +1175,9 @@ function listenOrders() {
   removeChannelSafe(dinnerChannel);
   dinnerChannel = supabase
     .channel('dinner-' + sessionId)
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'orders',     filter: 'dinner_id=eq.' + sessionId }, function() { refreshOrders(); })
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'order_items' }, function() { refreshOrders(); })
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'orders',       filter: 'dinner_id=eq.' + sessionId }, function() { refreshOrders(); })
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'order_items' },                                       function() { refreshOrders(); })
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'participants', filter: 'dinner_id=eq.' + sessionId }, function() { refreshOrders(); })
     .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'dinners', filter: 'id=eq.' + sessionId }, function(payload) {
       if (payload && payload.new) {
         if (payload.new.menu_items)   menuItems   = payload.new.menu_items;
@@ -1097,7 +1193,12 @@ function listenOrders() {
 }
 
 async function refreshOrders() {
-  orders = await fetchOrdersForDinner(sessionId);
+  var both = await Promise.all([
+    fetchOrdersForDinner(sessionId),
+    fetchParticipants(sessionId),
+  ]);
+  orders = both[0];
+  participants = both[1];
   renderHostSheetForCurrent();
 }
 
@@ -1172,15 +1273,18 @@ function renderHostClaim() {
   var tickerSection = '<div style="padding:0 16px 14px;">' + tickerHTML() + '</div>';
 
   var progressSection = '';
-  if (menuExists) {
+  if (menuExists || orders.length > 0) {
+    var claimedDollars = orders.reduce(function(s, o){ return s + (o.subtotal || 0); }, 0);
+    var subtotal = receiptData.subtotal || 0;
+    var dollarPct = subtotal > 0 ? Math.min(100, Math.round((claimedDollars / subtotal) * 100)) : 0;
     progressSection =
       '<div style="padding:0 22px 14px;">' +
-        '<div style="display:flex;justify-content:space-between;font-size:10.5px;font-weight:700;color:'+T.inkSoft+';margin-bottom:6px;letter-spacing:0.6px;">' +
-          '<span>WHAT WE ORDERED · '+menuItems.length+'</span>' +
-          '<span>'+claimedPct+'% claimed</span>' +
+        '<div style="display:flex;justify-content:space-between;align-items:center;font-size:10.5px;font-weight:700;color:'+T.inkSoft+';margin-bottom:6px;letter-spacing:0.6px;">' +
+          '<span>$'+claimedDollars.toFixed(2)+' OF $'+subtotal.toFixed(2)+' CLAIMED</span>' +
+          '<span>'+dollarPct+'%</span>' +
         '</div>' +
         '<div style="height:5px;background:'+T.paper+';border-radius:999px;overflow:hidden;">' +
-          '<div style="width:'+claimedPct+'%;height:100%;border-radius:999px;background:'+BTN_GRAD+';transition:width 0.4s ease;"></div>' +
+          '<div style="width:'+dollarPct+'%;height:100%;border-radius:999px;background:'+BTN_GRAD+';transition:width 0.4s ease;"></div>' +
         '</div>' +
       '</div>';
   }
@@ -1267,11 +1371,46 @@ function renderHostClaim() {
 
   document.getElementById('app').innerHTML =
     '<div class="tab-app tab-fade-in">' +
-      progressBarHTML('settle') + headerHTML + tickerSection + progressSection + bodyHTML + stickyHTML +
+      progressBarHTML('settle') + headerHTML + tickerSection + progressSection + bodyHTML + runningTallyHTML() + stickyHTML +
     '</div>';
 
   scrollTopReset();
   startTicker();
+}
+
+function runningTallyHTML() {
+  if (orders.length === 0) return '';
+  var rows = orders.map(function(o) {
+    var nItems = (o.items || []).length;
+    return '<div style="display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid '+T.ruleSoft+';">' +
+      avatarHTML(o.name, { size: 32 }) +
+      '<div style="flex:1;min-width:0;">' +
+        '<div style="font-size:14px;font-weight:600;color:'+T.ink+';overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' +
+          escapeHtml(o.name) +
+          (o.isHost ? ' <span class="tab-pill" style="background:'+T.tomato+';color:#fff;font-size:9.5px;">HOST</span>' : '') +
+        '</div>' +
+        '<div style="font-size:11.5px;color:'+T.inkDim+';font-weight:500;margin-top:2px;">' +
+          nItems + ' ' + (nItems === 1 ? 'item' : 'items') +
+        '</div>' +
+      '</div>' +
+      '<div style="text-align:right;flex-shrink:0;">' +
+        moneyHTML(o.subtotal) +
+        '<div style="font-size:9.5px;color:'+T.inkDim+';font-weight:700;letter-spacing:0.6px;margin-top:2px;">SO FAR</div>' +
+      '</div>' +
+    '</div>';
+  }).join('');
+  return '<div style="padding:14px 16px 0;">' +
+    '<div class="tab-card" style="padding:16px 18px;">' +
+      '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;gap:10px;">' +
+        '<div style="font-size:11px;font-weight:700;letter-spacing:0.6px;text-transform:uppercase;color:'+T.inkSoft+';">Running tally</div>' +
+        '<span class="tab-pill" style="background:rgba(229,75,60,0.10);color:'+T.tomato+';">Pre-tax · live</span>' +
+      '</div>' +
+      rows +
+      '<div style="margin-top:10px;font-size:11.5px;color:'+T.inkDim+';font-weight:500;text-align:center;line-height:1.4;">' +
+        'Tax & tip distribute when you tap <strong style="color:'+T.inkSoft+';">Settle up</strong>.' +
+      '</div>' +
+    '</div>' +
+  '</div>';
 }
 
 async function toggleHostItemClaim(idx) {
@@ -1306,6 +1445,8 @@ async function toggleHostItemClaim(idx) {
         p_subtotal: round2(subtotal), p_is_host: true, p_items: items,
       });
       if (r2.error) throw r2.error;
+      // Host has picked
+      supabase.rpc('mark_picked', { p_dinner_id: sessionId, p_name: hostName }).catch(function() {});
     } else {
       await supabase.from('orders').delete().eq('dinner_id', sessionId).eq('eater_name', hostName);
     }
@@ -1654,7 +1795,7 @@ function renderHostShareScreen() {
         '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>' +
         'Share link →' +
       '</button>' +
-      '<button class="tab-outline-btn" style="width:100%;" onclick="copyEaterLink()">📎 Copy link</button>' +
+      '<button class="tab-outline-btn" style="width:100%;" onclick="copyEaterLinkFromShare()">📎 Copy link</button>' +
       '<button class="tab-ghost-btn" style="margin-top:6px;padding:12px;font-weight:600;font-size:13.5px;color:'+T.inkSoft+';" onclick="setHostSheet(null)">Done — go to tab</button>' +
     '</div>' +
     '<div style="padding:18px 24px 0;text-align:center;font-size:11.5px;color:'+T.inkDim+';font-weight:500;word-break:break-all;">'+escapeHtml(eaterUrl)+'</div>' +
@@ -1799,6 +1940,10 @@ async function saveAllOrders() {
   var status = document.getElementById('add-order-status');
   if (status) status.textContent = 'Saving…';
   try {
+    // Register each as joined first (idempotent)
+    await Promise.all(toSave.map(function(o) {
+      return supabase.rpc('join_dinner', { p_dinner_id: sessionId, p_name: o.name }).catch(function(){});
+    }));
     var results = await Promise.all(toSave.map(function(o) {
       return supabase.rpc('upsert_order_with_items', {
         p_dinner_id: sessionId, p_eater_name: o.name,
@@ -1807,6 +1952,10 @@ async function saveAllOrders() {
     }));
     var firstError = results.find(function(r){ return r.error; });
     if (firstError) throw firstError.error;
+    // Mark each as picked
+    toSave.forEach(function(o) {
+      supabase.rpc('mark_picked', { p_dinner_id: sessionId, p_name: o.name }).catch(function(){});
+    });
     showToast('Saved ✓');
     setHostSheet(null);
   } catch (e) {
@@ -2257,6 +2406,8 @@ async function showEaterView() {
   var savedName = localStorage.getItem('eater-name-' + sessionId);
   eaterCtx = { dinner: dinner, selectedIndices: [] };
   if (savedName) {
+    // Idempotently register as joined the moment we know who they are
+    eaterJoinIfNeeded(savedName);
     var existing = await fetchEaterOrder(savedName);
     if (existing && existing.finalOwes != null) {
       eaterCtx.name = savedName;
@@ -2277,6 +2428,23 @@ async function showEaterView() {
     menuItems.forEach(function(m, i) { if (m.claimedBy === eaterCtx.prefillName) eaterCtx.selectedIndices.push(i); });
   }
   setEaterStage('claiming');
+}
+
+// Track names we've already registered this session so we don't spam join_dinner
+var _eaterJoinedNames = {};
+function eaterJoinIfNeeded(name) {
+  var n = (name || '').trim();
+  if (!n || _eaterJoinedNames[n]) return;
+  _eaterJoinedNames[n] = true;
+  supabase.rpc('join_dinner', { p_dinner_id: sessionId, p_name: n }).catch(function() {
+    // Allow a retry next time
+    delete _eaterJoinedNames[n];
+  });
+}
+function eaterNameMaybeJoin() {
+  var el = document.getElementById('guest-name');
+  if (!el) return;
+  eaterJoinIfNeeded(el.value);
 }
 
 function setEaterStage(stage) {
@@ -2393,7 +2561,7 @@ function renderEaterClaimingBody() {
     '<div class="tab-card" style="margin-bottom:14px;padding:14px 16px;">' +
       '<label class="tab-label" style="margin-bottom:6px;">Your name</label>' +
       '<input type="text" id="guest-name" class="tab-input" placeholder="First name + last initial" value="'+attr(meName)+'"' +
-        (meName ? ' readonly' : '') + ' oninput="syncEaterName()" />' +
+        (meName ? ' readonly' : '') + ' oninput="syncEaterName()" onblur="eaterNameMaybeJoin()" />' +
       '<div style="font-size:11px;color:'+T.inkDim+';margin-top:6px;font-weight:500;">First name + last initial keeps everyone unique.</div>' +
     '</div>';
 
@@ -2541,6 +2709,8 @@ async function submitEaterOrder() {
   var sendBtn = document.querySelector('.tab-sticky-bar .tab-grad-btn');
   if (sendBtn) { sendBtn.disabled = true; sendBtn.textContent = 'Sending…'; }
   try {
+    // Ensure participant exists (idempotent) before submitting picks
+    try { await supabase.rpc('join_dinner', { p_dinner_id: sessionId, p_name: name }); } catch (e) {}
     var r1 = await supabase.rpc('upsert_order_with_items', {
       p_dinner_id: sessionId, p_eater_name: name,
       p_subtotal: round2(subtotal), p_is_host: false, p_items: items,
@@ -2552,6 +2722,8 @@ async function submitEaterOrder() {
       });
       if (r2.error) throw r2.error;
     }
+    // Flip participant.has_picked → true (best-effort, doesn't block UI)
+    supabase.rpc('mark_picked', { p_dinner_id: sessionId, p_name: name }).catch(function() {});
     localStorage.setItem('eater-name-' + sessionId, name);
     localStorage.setItem('last-eater-session', sessionId);
     // Refresh orders for social proof on settled screen later
@@ -2794,7 +2966,8 @@ Object.assign(window, {
   showHostDashboard, showNewDinnerForm, selectPay, createDinner, deleteDinner, goToHostDinner,
   showDeleteTabConfirm, dismissDeleteTab, confirmDeleteTab,
   // Host dinner navigation
-  setHostSheet, renderHostClaim, copyEaterLink, shareEaterLink, clearOrders, toggleHostItemClaim,
+  setHostSheet, renderHostClaim, copyEaterLink, copyEaterLinkFromShare, shareEaterLink, clearOrders, toggleHostItemClaim,
+  navigateToStep,
   // Scan sheet
   scanReceipt, updateMenuItemName, updateMenuItemPrice, removeMenuItemByIdx, addMenuItem,
   setTipMode, setReceiptTip, updateTipFromPct, updateReceiptField,
@@ -2808,6 +2981,7 @@ Object.assign(window, {
   calculateFromClaims, doCalculate, notifyEaters, togglePaid,
   // Eater
   submitEaterOrder, toggleEaterClaim, updateEaterRunningTotal, syncEaterName,
+  eaterNameMaybeJoin,
   addItem, editEaterOrder, payViaZelle, payViaVenmo,
 });
 </script>
