@@ -756,6 +756,7 @@ function matchBannerHTML() {
 }
 
 function refreshMatchBanner() {
+  saveScanStateDebounced();
   var sub = (menuItems || []).reduce(function(s, m){ return s + (parseFloat(m.price)||0); }, 0);
   receiptData.subtotal = round2(sub);
   var subEl = document.getElementById('food-subtotal');
@@ -1092,6 +1093,139 @@ async function pickForSavePicks() {
     var msg = (e && (e.message || e.hint || e.details)) || 'Try again.';
     showToast("Couldn't save — " + msg);
   }
+}
+
+// ── Pre-settle confirmation overlay ─────────────────────────────────────
+// Sanity check before the host fires off totals to everyone. Shows three
+// status rows (items / people / math). All ✓ → primary "Send totals" CTA;
+// any ⚠️ → outlined "Send anyway" so the override is deliberate.
+function openPreSettleOverlay() {
+  dismissPreSettleOverlay();
+  // Compute status
+  var itemsTotal = (menuItems || []).length;
+  var itemsUnclaimed = (menuItems || []).filter(function(m){ return !m.claimedBy; });
+  var itemsOk = itemsTotal > 0 && itemsUnclaimed.length === 0;
+
+  var hostName = (currentDinner && currentDinner.hostName) || '';
+  var peopleAll = (participants || []);
+  var peopleUnfinished = peopleAll.filter(function(p){ return !p.has_picked; });
+  var peopleOk = peopleAll.length > 0 && peopleUnfinished.length === 0;
+
+  var sub = (menuItems || []).reduce(function(s,m){ return s + (parseFloat(m.price)||0); }, 0);
+  var tax = parseFloat(receiptData.tax) || 0;
+  var service = parseFloat(receiptData.serviceFee) || 0;
+  var tip = parseFloat(receiptData.tip) || 0;
+  var customs = (receiptData.fees || []).reduce(function(s,f){ return s + (parseFloat(f.amount)||0); }, 0);
+  var ourSum = sub + tax + service + tip + customs;
+  var printed = parseFloat(receiptData.receiptTotal) || 0;
+  var mathGap = printed > 0 ? Math.abs(ourSum - printed) : 0;
+  var mathOk = printed === 0 || mathGap < 0.10;
+
+  var allOk = itemsOk && peopleOk && mathOk;
+
+  var itemsText = itemsOk
+    ? ('All ' + itemsTotal + ' items claimed')
+    : (itemsUnclaimed.length + ' of ' + itemsTotal + ' items still unclaimed');
+  var itemsExtra = '';
+  if (!itemsOk) {
+    var listHtml = itemsUnclaimed.slice(0, 6).map(function(it) {
+      return '<div style="display:flex;justify-content:space-between;gap:8px;padding:2px 0;">' +
+        '<span>'+escapeHtml(it.name)+'</span>' +
+        '<span style="color:'+T.inkDim+';font-weight:600;flex-shrink:0;">$'+parseFloat(it.price).toFixed(2)+'</span>' +
+      '</div>';
+    }).join('');
+    var moreLine = itemsUnclaimed.length > 6 ? '<div style="color:'+T.inkDim+';">… and ' + (itemsUnclaimed.length - 6) + ' more</div>' : '';
+    itemsExtra =
+      '<div style="margin-top:8px;font-size:11.5px;color:'+T.inkSoft+';line-height:1.6;">' + listHtml + moreLine + '</div>' +
+      '<button onclick="dismissPreSettleOverlay()" class="tab-ghost-btn" style="margin-top:6px;padding:0;color:'+T.tomato+';font-weight:700;">Cancel & finish claiming →</button>';
+  }
+
+  var peopleText = peopleOk
+    ? ('All ' + peopleAll.length + ' people picked their items')
+    : (peopleUnfinished.length + ' of ' + peopleAll.length + ' still haven’t picked');
+  var peopleExtra = '';
+  if (!peopleOk && peopleUnfinished.length > 0) {
+    peopleExtra =
+      '<div style="margin-top:8px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;">' +
+        avatarStackHTML(peopleUnfinished.map(function(p){ return p.name; }), { size: 22, max: 6, ring: '#fff' }) +
+        '<span style="font-size:11.5px;color:'+T.inkSoft+';font-weight:500;">' +
+          peopleUnfinished.map(function(p){ return escapeHtml(p.name); }).join(', ') +
+        '</span>' +
+      '</div>' +
+      '<button onclick="dismissPreSettleOverlay();openPickForSomeoneElse();" class="tab-ghost-btn" style="margin-top:6px;padding:0;color:'+T.tomato+';font-weight:700;">Pick for them →</button>';
+  }
+
+  var mathText = mathOk
+    ? ('Math ties — $' + ourSum.toFixed(2))
+    : ('Off by $' + mathGap.toFixed(2));
+  var mathExtra = mathOk ? '' :
+    '<button onclick="dismissPreSettleOverlay();setHostSheet(\'scan\');" class="tab-ghost-btn" style="margin-top:6px;padding:0;color:'+T.tomato+';font-weight:700;">Fix it →</button>';
+
+  var primaryBtn = allOk
+    ? '<button onclick="preSettleProceed()" class="tab-grad-btn" style="width:100%;justify-content:center;padding:14px;">Send totals to eaters →</button>'
+    : '<button onclick="preSettleProceed()" class="tab-outline-btn" style="width:100%;border-color:'+T.tomato+';color:'+T.tomato+';font-weight:700;padding:14px;">Send anyway →</button>';
+
+  var inner =
+    '<div role="dialog" aria-modal="true" style="background:#fff;border-radius:24px 24px 18px 18px;width:100%;max-width:460px;max-height:90vh;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 -24px 48px -16px rgba(42,22,16,0.45);animation:stageSwap 240ms cubic-bezier(0.2,0.7,0.2,1);">' +
+      '<div style="padding:22px 22px 4px;">' +
+        '<div style="font-family:'+T.sans+';font-size:24px;font-weight:700;letter-spacing:-0.5px;color:'+T.ink+';">Ready to settle?</div>' +
+        '<div style="font-size:13px;color:'+T.inkSoft+';font-weight:500;margin-top:4px;line-height:1.4;">Quick sanity check before we send totals to everyone.</div>' +
+      '</div>' +
+      '<div style="padding:14px 22px 4px;flex:1;overflow-y:auto;display:flex;flex-direction:column;gap:10px;">' +
+        preSettleStatusRowHTML('Items', itemsOk, itemsText, itemsExtra) +
+        preSettleStatusRowHTML('People', peopleOk, peopleText, peopleExtra) +
+        preSettleStatusRowHTML('Math', mathOk, mathText, mathExtra) +
+      '</div>' +
+      '<div style="padding:14px 22px 18px;display:flex;flex-direction:column;gap:8px;border-top:1px solid '+T.rule+';background:#fff;">' +
+        primaryBtn +
+        '<button onclick="dismissPreSettleOverlay()" class="tab-ghost-btn" style="width:100%;padding:10px;font-weight:600;color:'+T.inkSoft+';">Wait, let me check</button>' +
+      '</div>' +
+    '</div>';
+
+  var overlay = document.createElement('div');
+  overlay.className = 'tab-pre-settle tab-modal-overlay';
+  overlay.style.cssText =
+    'position:fixed;inset:0;background:rgba(42,22,16,0.55);z-index:200;' +
+    'display:flex;align-items:flex-end;justify-content:center;padding:14px;' +
+    'animation:tabFadeIn 180ms ease-out;';
+  overlay.onclick = function(e) { if (e.target === overlay) dismissPreSettleOverlay(); };
+  overlay.innerHTML = inner;
+  document.body.appendChild(overlay);
+}
+
+function preSettleStatusRowHTML(label, ok, text, extra) {
+  var bg = ok ? 'rgba(95,107,58,0.10)' : 'rgba(229,75,60,0.08)';
+  var border = ok ? T.olive : T.tomato;
+  var iconColor = ok ? T.olive : T.tomato;
+  var icon = ok ? '✓' : '⚠️';
+  return '<div style="background:'+bg+';border-left:3px solid '+border+';border-radius:12px;padding:12px 14px;">' +
+    '<div style="display:flex;align-items:flex-start;gap:10px;">' +
+      '<span style="font-size:16px;color:'+iconColor+';line-height:1.1;margin-top:1px;flex-shrink:0;">'+icon+'</span>' +
+      '<div style="flex:1;min-width:0;">' +
+        '<div style="font-size:10.5px;font-weight:700;letter-spacing:0.6px;text-transform:uppercase;color:'+T.inkSoft+';">'+escapeHtml(label)+'</div>' +
+        '<div style="font-size:14px;font-weight:600;color:'+T.ink+';margin-top:2px;line-height:1.3;">'+escapeHtml(text)+'</div>' +
+        (extra || '') +
+      '</div>' +
+    '</div>' +
+  '</div>';
+}
+
+function preSettleProceed() {
+  dismissPreSettleOverlay();
+  // calculateFromClaims handles the unclaimed-items mismatch fork; if it
+  // computes cleanly, doCalculate lands on the settle sheet with lastResults
+  // already populated. Either way the host's next interaction is the final
+  // "Send totals to eaters" press on the settle sheet.
+  if (lastResults) {
+    setHostSheet('settle');
+  } else {
+    calculateFromClaims();
+  }
+}
+
+function dismissPreSettleOverlay() {
+  var els = document.querySelectorAll('.tab-pre-settle');
+  els.forEach(function(el){ el.remove(); });
 }
 
 // ── Routing ──────────────────────────────────────────────────────────────
@@ -1495,6 +1629,7 @@ async function confirmDeleteTab(id) {
     showToast('Delete failed — ' + (res.error.message || 'try again'));
     return;
   }
+  clearScanState(id);
   showToast('Tab deleted');
 }
 function goToHostDinner(id) {
@@ -1509,6 +1644,7 @@ function goToHostDinner(id) {
   totalsSent = false;
   pendingCalcData = null;
   editingOrderCtx = null;
+  scanStateRestored = false; // re-arm the sessionStorage rehydrate for this dinner
   window.history.pushState({}, '', '?mode=host&session=' + id);
   sessionId = id; mode = 'host';
   showHostDinner();
@@ -1704,7 +1840,7 @@ function renderHostClaim() {
             '<div style="font-size:10px;letter-spacing:1.4px;text-transform:uppercase;color:'+T.golden+';font-weight:700;">Tonight’s tab</div>' +
             '<div style="margin-top:4px;">'+moneyHTML(grandTotal, { big: true, color: T.cream })+'</div>' +
           '</div>' +
-          '<button class="tab-grad-btn" onclick="setHostSheet(\'settle\')">Settle up' +
+          '<button class="tab-grad-btn" onclick="openPreSettleOverlay()">Settle up' +
             '<svg width="13" height="13" viewBox="0 0 16 16" fill="none"><path d="M5 3l5 5-5 5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>' +
           '</button>' +
         '</div>' +
@@ -1955,6 +2091,26 @@ function renderHostScanSheet() {
   hostSheet = 'scan';
   stopTicker();
   scrollTopReset(); // PART 3: reset BEFORE innerHTML so the new screen mounts at 0
+  // First-mount only: rehydrate any in-progress scan state from sessionStorage,
+  // but defer to Supabase if it's been touched server-side since.
+  if (!scanStateRestored && !(receiptData && receiptData.confirmed)) {
+    scanStateRestored = true;
+    var saved = loadScanState();
+    if (saved && saved.scanTimestamp) {
+      var serverTs = currentDinner.menuSentAt ? new Date(currentDinner.menuSentAt).getTime() : 0;
+      if (saved.scanTimestamp > serverTs) {
+        if (Array.isArray(saved.menuItems)) menuItems = saved.menuItems;
+        if (saved.receiptData) {
+          var prevImg = receiptData && receiptData._previewImage;
+          var prevFile = receiptData && receiptData._lastFileName;
+          receiptData = saved.receiptData;
+          if (prevImg)  receiptData._previewImage  = prevImg;
+          if (prevFile) receiptData._lastFileName = prevFile;
+        }
+        console.log('[SCAN STATE] restored from sessionStorage (ts=' + saved.scanTimestamp + ')');
+      }
+    }
+  }
   // Auto-derive food subtotal from items
   var derivedSub = (menuItems || []).reduce(function(s, m){ return s + (parseFloat(m.price)||0); }, 0);
   receiptData.subtotal = round2(derivedSub);
@@ -1993,6 +2149,7 @@ function renderHostScanSheet() {
 }
 
 function photoCardHTML(hasScanned) {
+  var hasPreview = hasScanned && !!receiptData._previewImage;
   return '<div style="padding:0 22px 14px;">' +
     '<div class="tab-card">' +
       '<div style="display:flex;align-items:center;gap:14px;margin-bottom:14px;">' +
@@ -2009,9 +2166,96 @@ function photoCardHTML(hasScanned) {
           : '<span style="color:'+T.inkSoft+';font-weight:600;font-size:13.5px;">📂 Take photo or choose from gallery</span>') +
       '</label>' +
       '<input type="file" id="receipt-img" accept="image/*" onchange="scanReceipt()" style="display:none;" />' +
+      (hasPreview
+        ? '<div style="display:flex;align-items:center;gap:10px;margin-top:12px;padding:8px 10px;background:#FFF8EE;border-radius:12px;">' +
+            '<img src="'+attr(receiptData._previewImage)+'" alt="Receipt" onclick="openReceiptViewer()" ' +
+              'style="width:48px;height:48px;object-fit:cover;border-radius:10px;cursor:pointer;flex-shrink:0;border:1px solid '+T.rule+';" />' +
+            '<button onclick="openReceiptViewer()" class="tab-ghost-btn" style="padding:0;font-size:12.5px;font-weight:600;color:'+T.inkSoft+';">' +
+              '🔍 View receipt' +
+            '</button>' +
+          '</div>'
+        : '') +
       '<div id="scan-status" style="font-size:13px;margin-top:10px;color:'+T.inkSoft+';"></div>' +
     '</div>' +
   '</div>';
+}
+
+// Strip every "_"-prefixed key so client-only fields (preview image,
+// last filename, etc.) never end up in Supabase receipt_data jsonb.
+function stripReceiptInternal(rd) {
+  var clean = {};
+  Object.keys(rd || {}).forEach(function(k) {
+    if (k && k[0] !== '_') clean[k] = rd[k];
+  });
+  return clean;
+}
+
+// ── sessionStorage persistence for in-progress scan/review state ────────
+// Lets the host switch tabs / apps mid-edit and come back without losing
+// hand-typed prices, fees, or tax tweaks. SessionStorage (not localStorage)
+// keeps it scoped to this tab and disappears when the browser session ends.
+// Keyed per dinner_id so two dinners open in two tabs don't collide.
+var scanStateRestored = false;
+var _saveScanStateTimer = null;
+function saveScanState() {
+  if (!sessionId) return;
+  if (receiptData && receiptData.confirmed) return; // already in Supabase
+  try {
+    var state = {
+      menuItems: menuItems || [],
+      receiptData: stripReceiptInternal(receiptData || {}),
+      scanTimestamp: Date.now(),
+    };
+    sessionStorage.setItem('zubill-scan-state-' + sessionId, JSON.stringify(state));
+  } catch (e) {
+    console.warn('saveScanState failed (sessionStorage full?):', e);
+  }
+}
+function saveScanStateDebounced() {
+  if (_saveScanStateTimer) clearTimeout(_saveScanStateTimer);
+  _saveScanStateTimer = setTimeout(saveScanState, 400);
+}
+function loadScanState() {
+  if (!sessionId) return null;
+  try {
+    var raw = sessionStorage.getItem('zubill-scan-state-' + sessionId);
+    if (!raw) return null;
+    return JSON.parse(raw);
+  } catch (e) { return null; }
+}
+function clearScanState(id) {
+  var key = 'zubill-scan-state-' + (id || sessionId);
+  try { sessionStorage.removeItem(key); } catch (e) {}
+}
+
+function openReceiptViewer() {
+  if (!receiptData || !receiptData._previewImage) {
+    showToast('No photo to show — re-scan to view');
+    return;
+  }
+  dismissReceiptViewer();
+  var overlay = document.createElement('div');
+  overlay.className = 'tab-receipt-viewer';
+  overlay.style.cssText =
+    'position:fixed;inset:0;background:rgba(20,12,8,0.88);z-index:300;' +
+    'display:flex;align-items:center;justify-content:center;padding:20px;' +
+    'animation:tabFadeIn 180ms ease-out;cursor:zoom-out;';
+  overlay.onclick = function(e) { if (e.target === overlay) dismissReceiptViewer(); };
+  overlay.innerHTML =
+    '<button onclick="dismissReceiptViewer()" aria-label="Close" ' +
+      'style="position:absolute;top:16px;right:16px;width:38px;height:38px;border-radius:999px;background:rgba(255,255,255,0.18);border:none;color:#fff;font-size:20px;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:center;line-height:1;">×</button>' +
+    '<img src="'+attr(receiptData._previewImage)+'" alt="Receipt" ' +
+      'style="max-width:90vw;max-height:90vh;object-fit:contain;border-radius:10px;box-shadow:0 24px 48px -12px rgba(0,0,0,0.45);cursor:default;" ' +
+      'onclick="event.stopPropagation();" />';
+  document.body.appendChild(overlay);
+}
+
+function dismissReceiptViewer() {
+  var els = document.querySelectorAll('.tab-receipt-viewer');
+  els.forEach(function(el) {
+    el.style.animation = 'tabFadeIn 180ms ease-out reverse';
+    setTimeout(function(){ el.remove(); }, 170);
+  });
 }
 
 function foodZoneHTML(sub) {
@@ -2179,35 +2423,105 @@ function setFeeProportional(idx, proportional) {
   receiptData.fees[idx].proportional = !!proportional;
   delete receiptData.fees[idx].split;
   delete receiptData.fees[idx].person;
+  saveScanStateDebounced();
   renderHostScanSheet();
 }
 
-// Parse a "5 Peri Chicken (34.00)" style entry into N individual claimable rows.
-// Returns an array with at least one item; ungrouped entries pass through unchanged.
+// Parse grouped items into N individual claimable rows. Handles several patterns:
+//   "5 Peri Chicken (34.00)"     @ $170   → 5 × "Peri Chicken"  @ $34
+//   "Caesar Salad x2"            @ $30    → 2 × "Caesar Salad"  @ $15
+//   "2x Espresso"                @ $8     → 2 × "Espresso"      @ $4
+//   "Pie (3)"                    @ $24    → 3 × "Pie"           @ $8
+//   "Cake @ 2"                   @ $14    → 2 × "Cake"          @ $7
+//   "Bread qty 4"                @ $12    → 4 × "Bread"         @ $3
+//   "Diet Coke 4.75"             @ $4.75  → 1 ungrouped (4.75 is a PRICE, not qty)
+//   "Soup"                       @ $7     → 1 ungrouped
+// Rules: qty must be a small integer 2 ≤ n ≤ 20. A trailing paren is a per-unit
+// price hint if it has decimals or > 20; a small int without decimals is a qty.
+// Per-unit math: if total/qty rounds cleanly (within $0.05 of an honest two-decimal
+// figure), use it; otherwise distribute evenly with the residual going to the first
+// row so all N row prices sum exactly to the input price.
 function expandGroupedItem(item) {
-  var name = String((item && item.name) || '').trim();
+  var rawName = String((item && item.name) || '').trim();
   var price = parseFloat(item && item.price) || 0;
-  var m = name.match(/^(\d+)\s+(.+)$/);
-  if (!m) return [Object.assign({ claimedBy: null }, item || {}, { name: name, price: price })];
-  var qty = parseInt(m[1], 10);
-  if (!qty || qty < 2) return [Object.assign({ claimedBy: null }, item || {}, { name: name, price: price })];
-  var rest = m[2];
-  var perUnit = price / qty;
-  var pm = rest.match(/\s*\(([\d.]+)\)\s*$/);
-  if (pm) {
-    var paren = parseFloat(pm[1]);
-    if (!isNaN(paren) && paren > 0 && Math.abs(paren * qty - price) < 0.05) {
-      perUnit = paren;
-    }
-    rest = rest.replace(/\s*\(([\d.]+)\)\s*$/, '').trim();
+  var qty = 0;
+  var cleanName = rawName;
+  var parenPerUnit = null;
+
+  // a) leading "N " (integer + space) — "5 Peri Chicken"
+  var m = rawName.match(/^(\d+)\s+(.+)$/);
+  if (m) {
+    var n = parseInt(m[1], 10);
+    if (n > 1 && n <= 20) { qty = n; cleanName = m[2].trim(); }
   }
-  var cleanName = rest;
+  // b) leading "NxItem" / "NX Item" — "2x Espresso", "3X Latte"
+  if (qty === 0) {
+    m = rawName.match(/^(\d+)\s*[xX]\s+(.+)$/);
+    if (m) {
+      var n2 = parseInt(m[1], 10);
+      if (n2 > 1 && n2 <= 20) { qty = n2; cleanName = m[2].trim(); }
+    }
+  }
+  // c) trailing " xN" / " XN" — "Caesar Salad x2"
+  if (qty === 0) {
+    m = rawName.match(/^(.+?)\s+[xX]\s*(\d+)\s*$/);
+    if (m) {
+      var n3 = parseInt(m[2], 10);
+      if (n3 > 1 && n3 <= 20) { qty = n3; cleanName = m[1].trim(); }
+    }
+  }
+  // d) trailing " @ N" / " qty N" — "Cake @ 2", "Bread qty 4"
+  if (qty === 0) {
+    m = rawName.match(/^(.+?)\s+(?:@\s*|qty\s+)(\d+)\s*$/i);
+    if (m) {
+      var n4 = parseInt(m[2], 10);
+      if (n4 > 1 && n4 <= 20) { qty = n4; cleanName = m[1].trim(); }
+    }
+  }
+
+  // Trailing paren: could be qty "(2)" or per-unit hint "(34.00)".
+  // Decimals OR value > 20 → per-unit price. Small int 2..20 → quantity (only
+  // if we haven't already detected a qty elsewhere).
+  m = cleanName.match(/^(.+?)\s*\(([\d.]+)\)\s*$/);
+  if (m) {
+    var inner = m[2];
+    var parenN = parseFloat(inner);
+    if (!isNaN(parenN)) {
+      var hasDecimals = inner.indexOf('.') >= 0;
+      if (!hasDecimals && parenN > 1 && parenN <= 20 && qty === 0) {
+        qty = Math.floor(parenN);
+        cleanName = m[1].trim();
+      } else if (hasDecimals || parenN > 20) {
+        parenPerUnit = parenN;
+        cleanName = m[1].trim();
+      }
+    }
+  }
+
+  if (qty < 2) {
+    return [{ name: cleanName, price: price, claimedBy: null }];
+  }
+
+  // Per-unit price: use the paren hint only if it lines up with total ±$0.05.
+  var perUnitRaw;
+  if (parenPerUnit != null && Math.abs(parenPerUnit * qty - price) < 0.05) {
+    perUnitRaw = parenPerUnit;
+  } else {
+    perUnitRaw = price / qty;
+  }
+  var perUnit = Math.round(perUnitRaw * 100) / 100;
+  var residual = Math.round((price - perUnit * qty) * 100) / 100;
+
   var gid = 'g-' + cleanName.replace(/\s+/g, '-').toLowerCase().replace(/[^a-z0-9-]/g, '') + '-' + perUnit.toFixed(2);
   var out = [];
   for (var i = 0; i < qty; i++) {
+    var rowPrice = perUnit;
+    if (i === 0 && Math.abs(residual) >= 0.01) {
+      rowPrice = Math.round((perUnit + residual) * 100) / 100;
+    }
     out.push({
       name: cleanName,
-      price: round2(perUnit),
+      price: rowPrice,
       claimedBy: null,
       groupId: gid,
       groupSize: qty,
@@ -2293,7 +2607,11 @@ function scanReceipt() {
     }
     canvas.width = w; canvas.height = h;
     canvas.getContext('2d').drawImage(img, 0, 0, w, h);
-    var base64 = canvas.toDataURL('image/jpeg', 0.7).split(',')[1];
+    var dataUrl = canvas.toDataURL('image/jpeg', 0.7);
+    var base64 = dataUrl.split(',')[1];
+    // Keep a viewable copy in module scope. Underscore-prefixed → stripped
+    // before any Supabase write by stripReceiptInternal().
+    receiptData._previewImage = dataUrl;
 
     // SINGLE structured-mode call. Worker returns items, food_subtotal, tax,
     // automatic_gratuity, additional_tip, fees[], grand_total, warnings[].
@@ -2336,6 +2654,7 @@ function scanReceipt() {
       }
       // Warnings for the new banner
       receiptData.scanWarnings = Array.isArray(d.warnings) ? d.warnings.slice() : [];
+      saveScanStateDebounced();
       renderHostScanSheet();
     }).catch(function(e) {
       var st = document.getElementById('scan-status');
@@ -2347,7 +2666,7 @@ function scanReceipt() {
 
 function updateMenuItemName(el) {
   var idx = parseInt(el.dataset.idx);
-  if (menuItems[idx]) menuItems[idx].name = el.value;
+  if (menuItems[idx]) { menuItems[idx].name = el.value; saveScanStateDebounced(); }
 }
 function updateMenuItemPrice(el) {
   var idx = parseInt(el.dataset.idx);
@@ -2358,6 +2677,7 @@ function updateMenuItemPrice(el) {
 }
 function removeMenuItemByIdx(idx) {
   menuItems.splice(idx, 1);
+  saveScanStateDebounced();
   renderHostScanSheet();
 }
 // Legacy stubs (kept so any saved-state references don't blow up)
@@ -2369,6 +2689,7 @@ function checkReceiptMatch()  { refreshMatchBanner(); }
 function addFee() {
   receiptData.fees = receiptData.fees || [];
   receiptData.fees.push({ name: '', amount: 0, split: 'everyone', person: '' });
+  saveScanStateDebounced();
   renderHostScanSheet();
 }
 function renderFeeRow(idx) {
@@ -2403,6 +2724,7 @@ function updateFeeEl(el) {
 }
 function removeFee(idx) {
   receiptData.fees.splice(parseInt(idx), 1);
+  saveScanStateDebounced();
   renderHostScanSheet();
 }
 
@@ -2425,10 +2747,11 @@ async function confirmReceiptTotals() {
   receiptData.serviceFee = service;
   receiptData.tip = tip;
   receiptData.confirmed = true;
-  var update = { receipt_data: receiptData, menu_items: menuItems };
+  var update = { receipt_data: stripReceiptInternal(receiptData), menu_items: menuItems };
   if (menuItems && menuItems.length > 0) update.menu_sent_at = new Date().toISOString();
   var res = await supabase.from('dinners').update(update).eq('id', sessionId);
   if (res.error) { alert('Error: ' + res.error.message); return; }
+  clearScanState();
   setHostSheet('share');
 }
 
@@ -3752,6 +4075,7 @@ function addItem(name, price) {
 function addMenuItem() {
   menuItems = (menuItems || []).slice();
   menuItems.push({ name: '', price: 0, claimedBy: null });
+  saveScanStateDebounced();
   renderHostScanSheet();
 }
 
@@ -3778,6 +4102,10 @@ Object.assign(window, {
   openPickForSomeoneElse, dismissPickForModal,
   pickForChooseExisting, pickForAddNew, pickForBackToWho,
   togglePickForClaim, pickForSavePicks,
+  // Receipt viewer
+  openReceiptViewer, dismissReceiptViewer,
+  // Pre-settle confirmation overlay
+  openPreSettleOverlay, dismissPreSettleOverlay, preSettleProceed,
   // Edit-order sheet
   addEditItem, saveEditOrder, removeItem, editOrderInline,
   // Settle / mismatch / paid
