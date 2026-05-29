@@ -304,7 +304,7 @@ async function fetchParticipants(id) {
   try {
     var res = await supabase
       .from('participants')
-      .select('id, name, joined_at, has_picked, picked_at')
+      .select('id, name, joined_at, has_picked, picked_at, picked_by_host')
       .eq('dinner_id', id)
       .order('joined_at', { ascending: true });
     if (res.error) { console.warn('fetchParticipants error:', res.error); return []; }
@@ -415,14 +415,19 @@ function avatarHTMLWithCheck(name, opts) {
   opts = opts || {};
   var size = opts.size || 28;
   var picked = !!opts.picked;
+  var pickedByHost = !!opts.pickedByHost;
   var ring = opts.ring || T.cream;
   var p = avatarFor(name);
   var dim = picked ? '' : 'opacity:0.55;';
-  var html = '<div style="position:relative;display:inline-block;width:'+size+'px;height:'+size+'px;flex-shrink:0;">' +
+  var html = '<div style="position:relative;display:inline-block;width:'+size+'px;height:'+size+'px;flex-shrink:0;" title="'+attr(name + (pickedByHost ? ' · picked by host' : ''))+'">' +
     '<div style="width:'+size+'px;height:'+size+'px;border-radius:999px;background:'+p.tone+';color:#fff;display:flex;align-items:center;justify-content:center;font-family:'+T.sans+';font-weight:600;font-size:'+(size*0.42).toFixed(1)+'px;letter-spacing:0.2px;'+dim+(ring?'box-shadow:0 0 0 2px '+ring+';':'')+'">'+escapeHtml(p.initial)+'</div>';
   if (picked) {
     var bs = Math.max(11, Math.round(size * 0.46));
-    html += '<div style="position:absolute;bottom:-2px;right:-2px;width:'+bs+'px;height:'+bs+'px;border-radius:999px;background:'+T.olive+';color:#fff;display:flex;align-items:center;justify-content:center;font-size:'+Math.max(8, Math.round(bs*0.58))+'px;font-weight:800;box-shadow:0 0 0 2px '+ring+';line-height:1;">✓</div>';
+    // Subtle by-host flag: golden 🤝 badge instead of the olive ✓
+    var bg = pickedByHost ? T.golden : T.olive;
+    var glyph = pickedByHost ? '🤝' : '✓';
+    var fontSize = pickedByHost ? Math.max(7, Math.round(bs*0.55)) : Math.max(8, Math.round(bs*0.58));
+    html += '<div style="position:absolute;bottom:-2px;right:-2px;width:'+bs+'px;height:'+bs+'px;border-radius:999px;background:'+bg+';color:#fff;display:flex;align-items:center;justify-content:center;font-size:'+fontSize+'px;font-weight:800;box-shadow:0 0 0 2px '+ring+';line-height:1;">'+glyph+'</div>';
   }
   html += '</div>';
   return html;
@@ -442,7 +447,12 @@ function participantsStackHTML(parts, opts) {
   for (var i = 0; i < shown.length; i++) {
     var margin = i === 0 ? 0 : -size*0.32;
     html += '<div style="margin-left:'+margin+'px;">' +
-      avatarHTMLWithCheck(shown[i].name, { size: size, picked: !!shown[i].has_picked, ring: ring }) +
+      avatarHTMLWithCheck(shown[i].name, {
+        size: size,
+        picked: !!shown[i].has_picked,
+        pickedByHost: !!shown[i].picked_by_host,
+        ring: ring,
+      }) +
     '</div>';
   }
   if (rest > 0) {
@@ -785,6 +795,303 @@ function shareEaterLink() {
 function copyEaterLinkFromShare() {
   copyEaterLink();
   setTimeout(function() { setHostSheet(null); }, 600);
+}
+
+// In-place share popup for the live claim view header.
+// Triggers navigator.share when available, falls back to a QR + copy modal.
+function sharePopupInPlace() {
+  var url = window.location.origin + window.location.pathname + '?mode=eater&session=' + sessionId;
+  var rest = (currentDinner && currentDinner.restaurant) || 'dinner';
+  var hostFirst = ((currentDinner && currentDinner.hostName) || 'Your friend').split(/\s+/)[0];
+  if (navigator.share) {
+    navigator.share({
+      title: rest,
+      text: hostFirst + ' sent you the bill — tap to claim what you ate 🍝',
+      url: url,
+    }).catch(function(e) { console.warn('navigator.share rejected:', e); });
+    return;
+  }
+  showShareFallbackModal(url);
+}
+
+function showShareFallbackModal(url) {
+  dismissShareFallback();
+  var overlay = document.createElement('div');
+  overlay.className = 'tab-share-fallback tab-modal-overlay';
+  overlay.style.cssText =
+    'position:fixed;inset:0;background:rgba(42,22,16,0.55);z-index:200;' +
+    'display:flex;align-items:center;justify-content:center;padding:20px;' +
+    'animation:tabFadeIn 180ms ease-out;';
+  overlay.onclick = function(e) { if (e.target === overlay) dismissShareFallback(); };
+  overlay.innerHTML =
+    '<div style="background:#fff;border-radius:24px;padding:22px 22px 18px;max-width:340px;width:100%;text-align:center;' +
+      'box-shadow:0 24px 48px -16px rgba(42,22,16,0.45);animation:stageSwap 240ms cubic-bezier(0.2,0.7,0.2,1);">' +
+      '<div style="font-family:'+T.sans+';font-size:20px;font-weight:700;letter-spacing:-0.4px;color:'+T.ink+';margin-bottom:14px;">' +
+        'Share the tab' +
+      '</div>' +
+      '<div style="background:'+T.cream+';border:2px solid '+T.paper+';border-radius:20px;padding:18px;width:240px;height:240px;' +
+        'box-sizing:border-box;margin:0 auto 12px;display:flex;align-items:center;justify-content:center;">' +
+        '<div id="qr-popup" style="width:204px;height:204px;display:flex;align-items:center;justify-content:center;overflow:hidden;"></div>' +
+      '</div>' +
+      '<div style="font-size:12px;color:'+T.inkSoft+';margin-bottom:14px;font-weight:600;letter-spacing:0.2px;">' +
+        'AirDrop the QR ↑ fastest 🏃' +
+      '</div>' +
+      '<button onclick="copyEaterLink()" class="tab-outline-btn" style="width:100%;">📎 Copy link</button>' +
+      '<button onclick="dismissShareFallback()" class="tab-ghost-btn" style="margin-top:6px;width:100%;padding:10px;font-weight:600;color:'+T.inkSoft+';">Close</button>' +
+    '</div>';
+  document.body.appendChild(overlay);
+  setTimeout(function() {
+    var qrEl = document.getElementById('qr-popup');
+    if (!qrEl) return;
+    qrEl.innerHTML = '';
+    if (window.QRCode) {
+      try {
+        new window.QRCode(qrEl, {
+          text: url, width: 204, height: 204,
+          colorDark: T.espresso, colorLight: T.cream,
+          correctLevel: window.QRCode.CorrectLevel.M,
+        });
+      } catch (e) {
+        qrEl.innerHTML = '<div style="font-size:12px;color:'+T.inkSoft+';">Couldn’t draw QR — use Copy link.</div>';
+      }
+    }
+  }, 30);
+}
+
+function dismissShareFallback() {
+  var els = document.querySelectorAll('.tab-share-fallback');
+  els.forEach(function(el){ el.remove(); });
+}
+
+// ── "Pick for someone else" modal ───────────────────────────────────────
+// Two-step overlay: (1) pick / add a participant, (2) pick their items.
+// Marks the saved order with picked_by_host=true via the new mark_picked
+// signature so the host can later see which picks they did on behalf of.
+var pickForCtx = { stage: 'who', name: null, selectedIndices: [] };
+
+function openPickForSomeoneElse() {
+  pickForCtx = { stage: 'who', name: null, selectedIndices: [] };
+  renderPickForModal();
+}
+
+function dismissPickForModal() {
+  var els = document.querySelectorAll('.tab-pick-for');
+  els.forEach(function(el){ el.remove(); });
+  pickForCtx = { stage: 'who', name: null, selectedIndices: [] };
+}
+
+function renderPickForModal() {
+  dismissPickForModal.__skipReset = true; // dismiss any prior without nuking ctx
+  var prior = document.querySelectorAll('.tab-pick-for');
+  prior.forEach(function(el){ el.remove(); });
+  dismissPickForModal.__skipReset = false;
+
+  var overlay = document.createElement('div');
+  overlay.className = 'tab-pick-for tab-modal-overlay';
+  overlay.style.cssText =
+    'position:fixed;inset:0;background:rgba(42,22,16,0.55);z-index:200;' +
+    'display:flex;align-items:flex-end;justify-content:center;padding:14px;' +
+    'animation:tabFadeIn 180ms ease-out;';
+  overlay.onclick = function(e) { if (e.target === overlay) dismissPickForModal(); };
+
+  var inner;
+  if (pickForCtx.stage === 'who') inner = pickForWhoSheetHTML();
+  else                            inner = pickForItemsSheetHTML();
+
+  overlay.innerHTML =
+    '<div role="dialog" aria-modal="true" style="background:#fff;border-radius:24px 24px 18px 18px;width:100%;max-width:460px;max-height:90vh;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 -24px 48px -16px rgba(42,22,16,0.45);animation:stageSwap 240ms cubic-bezier(0.2,0.7,0.2,1);">' +
+      inner +
+    '</div>';
+  document.body.appendChild(overlay);
+
+  if (pickForCtx.stage === 'who') {
+    setTimeout(function() {
+      var el = document.getElementById('pick-for-new');
+      if (el) el.focus();
+    }, 80);
+  }
+}
+
+function pickForWhoSheetHTML() {
+  var hostName = (currentDinner && currentDinner.hostName) || '';
+  var unfinished = (participants || []).filter(function(p) {
+    return p.name !== hostName && !p.has_picked;
+  });
+  var html =
+    '<div style="padding:18px 22px 4px;display:flex;align-items:center;justify-content:space-between;gap:10px;">' +
+      '<div>' +
+        '<div style="font-size:11px;font-weight:700;letter-spacing:0.6px;text-transform:uppercase;color:'+T.inkSoft+';">Step 1 of 2</div>' +
+        '<div style="font-size:20px;font-weight:700;letter-spacing:-0.4px;color:'+T.ink+';margin-top:2px;">Who are you picking for?</div>' +
+      '</div>' +
+      '<button onclick="dismissPickForModal()" class="tab-iconbtn" aria-label="Close">' +
+        '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="'+T.ink+'" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>' +
+      '</button>' +
+    '</div>' +
+    '<div style="padding:8px 22px 18px;flex:1;overflow-y:auto;">';
+
+  html +=
+    '<div style="font-size:11px;font-weight:700;letter-spacing:0.6px;text-transform:uppercase;color:'+T.inkSoft+';margin:14px 0 8px;">Already joined</div>';
+  if (unfinished.length === 0) {
+    html += '<div style="background:'+T.paper+';border-radius:14px;padding:14px 16px;font-size:12.5px;color:'+T.inkSoft+';font-weight:500;line-height:1.4;">Everyone who joined has already picked. Add someone new below.</div>';
+  } else {
+    html += '<div style="display:flex;flex-direction:column;gap:6px;">';
+    unfinished.forEach(function(p) {
+      html +=
+        '<button onclick="pickForChooseExisting(\''+attr(p.name)+'\')" class="tab-item-row" style="background:#fff;border:none;text-align:left;width:100%;">' +
+          avatarHTML(p.name, { size: 30 }) +
+          '<div style="flex:1;min-width:0;font-size:14.5px;font-weight:600;color:'+T.ink+';overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">'+escapeHtml(p.name)+'</div>' +
+          '<svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M5 3l5 5-5 5" stroke="'+T.inkDim+'" stroke-width="2" stroke-linecap="round"/></svg>' +
+        '</button>';
+    });
+    html += '</div>';
+  }
+
+  html +=
+    '<div style="font-size:11px;font-weight:700;letter-spacing:0.6px;text-transform:uppercase;color:'+T.inkSoft+';margin:18px 0 8px;">Or add someone new</div>' +
+    '<div style="display:flex;gap:8px;">' +
+      '<input type="text" id="pick-for-new" class="tab-input" placeholder="Their name" style="flex:1;" onkeydown="if(event.key===\'Enter\'){pickForAddNew();}" />' +
+      '<button onclick="pickForAddNew()" class="tab-grad-btn" style="padding:12px 18px;">Add →</button>' +
+    '</div>';
+
+  html += '</div>';
+  return html;
+}
+
+function pickForItemsSheetHTML() {
+  var name = pickForCtx.name || '';
+  var selected = (pickForCtx.selectedIndices || []);
+  var subtotal = 0;
+  selected.forEach(function(i) {
+    var m = menuItems[i];
+    if (m) subtotal += parseFloat(m.price) || 0;
+  });
+  var html =
+    '<div style="padding:18px 22px 4px;display:flex;align-items:center;justify-content:space-between;gap:10px;">' +
+      '<div>' +
+        '<div style="font-size:11px;font-weight:700;letter-spacing:0.6px;text-transform:uppercase;color:'+T.inkSoft+';">Step 2 of 2</div>' +
+        '<div style="font-size:20px;font-weight:700;letter-spacing:-0.4px;color:'+T.ink+';margin-top:2px;">Pick ' + escapeHtml(name) + '’s items</div>' +
+      '</div>' +
+      '<button onclick="dismissPickForModal()" class="tab-iconbtn" aria-label="Close">' +
+        '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="'+T.ink+'" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>' +
+      '</button>' +
+    '</div>' +
+    '<div style="padding:8px 16px 18px;flex:1;overflow-y:auto;">';
+
+  if (!menuItems || menuItems.length === 0) {
+    html += '<div style="background:'+T.paper+';border-radius:14px;padding:14px 16px;font-size:12.5px;color:'+T.inkSoft+';font-weight:500;line-height:1.4;">No menu items yet — scan a receipt first.</div>';
+  } else {
+    html += '<div style="display:flex;flex-direction:column;gap:8px;">';
+    menuItems.forEach(function(item, idx) {
+      var claimer = item.claimedBy;
+      var isSelected = selected.indexOf(idx) >= 0;
+      var isOtherClaim = claimer && claimer !== name;
+      if (isOtherClaim) return; // skip items claimed by someone else
+      var rowClass = 'tab-item-row' + (isSelected ? ' is-mine' : '');
+      html +=
+        '<div class="'+rowClass+'" onclick="togglePickForClaim('+idx+')">' +
+          '<div class="tab-emoji-chip">'+emojiForItem(item.name)+'</div>' +
+          '<div style="flex:1;min-width:0;">' +
+            '<div style="font-size:14.5px;font-weight:600;letter-spacing:-0.2px;color:'+T.ink+';overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' +
+              escapeHtml(item.name) +
+              (item.groupId ? ' <span style="color:'+T.inkDim+';font-weight:500;font-size:12px;">('+((item.groupIndex||0)+1)+'/'+(item.groupSize||1)+')</span>' : '') +
+            '</div>' +
+            (isSelected ? '<div style="font-size:10.5px;color:'+T.tomato+';font-weight:700;letter-spacing:0.3px;margin-top:3px;">TAPPED</div>' : '') +
+          '</div>' +
+          '<div style="text-align:right;">'+moneyHTML(item.price)+'</div>' +
+        '</div>';
+    });
+    html += '</div>';
+  }
+  html += '</div>';
+
+  // Sticky footer with running subtotal + actions
+  html +=
+    '<div style="padding:12px 22px;border-top:1px solid '+T.rule+';background:#fff;display:flex;flex-direction:column;gap:8px;">' +
+      '<div style="display:flex;justify-content:space-between;align-items:baseline;">' +
+        '<span style="font-size:11px;font-weight:700;letter-spacing:0.6px;text-transform:uppercase;color:'+T.inkSoft+';">Running</span>' +
+        moneyHTML(subtotal) +
+      '</div>' +
+      '<div style="display:flex;gap:8px;">' +
+        '<button onclick="pickForBackToWho()" class="tab-outline-btn" style="flex:0 0 auto;padding:12px 16px;">‹ Back</button>' +
+        '<button onclick="pickForSavePicks()" class="tab-grad-btn" style="flex:1;justify-content:center;padding:13px;">Save picks for '+escapeHtml(name.split(/\s+/)[0])+'</button>' +
+      '</div>' +
+    '</div>';
+  return html;
+}
+
+function pickForChooseExisting(name) {
+  pickForCtx.name = name;
+  pickForCtx.stage = 'items';
+  pickForCtx.selectedIndices = [];
+  (menuItems || []).forEach(function(m, i) {
+    if (m && m.claimedBy === name) pickForCtx.selectedIndices.push(i);
+  });
+  renderPickForModal();
+}
+
+async function pickForAddNew() {
+  var el = document.getElementById('pick-for-new');
+  var name = el ? el.value.trim() : '';
+  if (!name) { showToast('Enter their name'); return; }
+  try {
+    var r = await supabase.rpc('join_dinner', { p_dinner_id: sessionId, p_name: name });
+    if (r && r.error) console.warn('[PICK-FOR] join_dinner error:', r.error);
+  } catch (e) { console.warn('[PICK-FOR] join_dinner threw:', e); }
+  pickForChooseExisting(name);
+}
+
+function pickForBackToWho() {
+  pickForCtx.stage = 'who';
+  pickForCtx.selectedIndices = [];
+  renderPickForModal();
+}
+
+function togglePickForClaim(idx) {
+  if (!pickForCtx.selectedIndices) pickForCtx.selectedIndices = [];
+  var pos = pickForCtx.selectedIndices.indexOf(idx);
+  if (pos >= 0) pickForCtx.selectedIndices.splice(pos, 1);
+  else pickForCtx.selectedIndices.push(idx);
+  renderPickForModal();
+}
+
+async function pickForSavePicks() {
+  var name = pickForCtx.name;
+  var indices = (pickForCtx.selectedIndices || []).slice();
+  if (!name) { showToast('Pick a person first'); return; }
+  if (indices.length === 0) { showToast('Tap at least one item'); return; }
+  var items = []; var subtotal = 0;
+  indices.forEach(function(i) {
+    var m = menuItems[i];
+    if (!m) return;
+    items.push({ name: m.name, price: parseFloat(m.price) || 0 });
+    subtotal += parseFloat(m.price) || 0;
+  });
+  try {
+    console.log('[PICK-FOR] saving for "' + name + '" — ' + items.length + ' items');
+    var r1 = await supabase.rpc('upsert_order_with_items', {
+      p_dinner_id: sessionId, p_eater_name: name,
+      p_subtotal: round2(subtotal), p_is_host: false, p_items: items,
+    });
+    if (r1 && r1.error) { console.error('[PICK-FOR] upsert failed:', r1.error); throw r1.error; }
+    var r2 = await supabase.rpc('claim_menu_items', {
+      p_dinner_id: sessionId, p_eater_name: name, p_indices: indices,
+    });
+    if (r2 && r2.error) { console.error('[PICK-FOR] claim_menu_items failed:', r2.error); throw r2.error; }
+    // NEW: mark_picked with picked_by_host=true so the UI can flag it later
+    try {
+      var r3 = await supabase.rpc('mark_picked', {
+        p_dinner_id: sessionId, p_name: name, p_picked_by_host: true,
+      });
+      if (r3 && r3.error) console.warn('[PICK-FOR] mark_picked error:', r3.error);
+    } catch (e) { console.warn('[PICK-FOR] mark_picked threw:', e); }
+    showToast('Picks saved for ' + name + ' 🤝');
+    dismissPickForModal();
+    refreshOrders();
+  } catch (e) {
+    console.error('[PICK-FOR] failed:', e);
+    var msg = (e && (e.message || e.hint || e.details)) || 'Try again.';
+    showToast("Couldn't save — " + msg);
+  }
 }
 
 // ── Routing ──────────────────────────────────────────────────────────────
@@ -1280,7 +1587,7 @@ function renderHostSheetForCurrent() {
   if (hostSheet === null)           return renderHostClaim();
   if (hostSheet === 'scan')         return renderHostScanSheet();
   if (hostSheet === 'share')        return renderHostShareScreen();
-  if (hostSheet === 'add-eaters')   return renderHostAddEatersSheet();
+  // 'add-eaters' is gone — replaced by openPickForSomeoneElse modal
   if (hostSheet === 'settle')       return renderHostSettleSheet();
   if (hostSheet === 'mismatch')     return renderHostMismatchScreen();
   if (hostSheet === 'paid')         return renderHostPaidSheet();
@@ -1335,7 +1642,7 @@ function renderHostClaim() {
     : 0;
 
   var rightHeader =
-    '<button class="tab-iconbtn" onclick="setHostSheet(\'share\')" aria-label="Share tab" title="Share tab">' +
+    '<button class="tab-iconbtn" onclick="sharePopupInPlace()" aria-label="Share tab" title="Share tab">' +
       '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="'+T.ink+'" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>' +
     '</button>';
 
@@ -1375,11 +1682,7 @@ function renderHostClaim() {
         bodyHTML += renderHostSingleItemRow(slot.item, slot.index, hostName);
       }
     });
-    bodyHTML +=
-      '<div style="display:flex;justify-content:center;margin-top:6px;">' +
-        '<button class="tab-outline-btn" onclick="setHostSheet(\'add-eaters\')">+ Add eater manually</button>' +
-      '</div>' +
-      '</div>';
+    bodyHTML += '</div>';
   } else {
     bodyHTML +=
       '<div style="padding:0 22px 160px;display:flex;flex-direction:column;gap:14px;">' +
@@ -1388,9 +1691,6 @@ function renderHostClaim() {
           '<div style="font-size:19px;font-weight:700;color:'+T.ink+';letter-spacing:-0.3px;">Scan the receipt</div>' +
           '<div style="font-size:13px;color:'+T.inkSoft+';font-weight:500;margin-top:6px;max-width:280px;margin-inline:auto;line-height:1.4;">Snap a photo and we’ll read items, totals, tax — the lot.</div>' +
           '<button class="tab-grad-btn" style="margin-top:18px;" onclick="setHostSheet(\'scan\')">Open scanner →</button>' +
-        '</div>' +
-        '<div style="text-align:center;color:'+T.inkSoft+';font-size:12.5px;font-weight:500;">' +
-          'or <button class="tab-ghost-btn" style="padding:0;" onclick="setHostSheet(\'add-eaters\')">add eaters manually</button>' +
         '</div>' +
       '</div>';
   }
@@ -1432,8 +1732,8 @@ function renderHostClaim() {
 
   document.getElementById('app').innerHTML =
     '<div class="tab-app tab-fade-in">' +
-      progressBarHTML('settle') + headerHTML + tickerSection + progressSection +
-      hostClaimReminderHTML() + bodyHTML + runningTallyHTML() + stickyHTML +
+      progressBarHTML('settle') + headerHTML + tickerSection + pickForCtaHTML() +
+      progressSection + hostClaimReminderHTML() + bodyHTML + runningTallyHTML() + stickyHTML +
     '</div>';
 
   startTicker();
@@ -1457,6 +1757,12 @@ function runningTallyHTML() {
         '<div style="font-size:14px;font-weight:600;color:'+T.ink+';overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' +
           escapeHtml(o.name) +
           (o.isHost ? ' <span class="tab-pill" style="background:'+T.tomato+';color:#fff;font-size:9.5px;">HOST</span>' : '') +
+          (function() {
+            var part = (participants || []).find(function(p){ return p.name === o.name; });
+            return (part && part.picked_by_host)
+              ? ' <span style="color:'+T.inkDim+';font-weight:500;font-size:11px;">(picked by host)</span>'
+              : '';
+          })() +
         '</div>' +
         '<div style="font-size:11.5px;color:'+T.inkDim+';font-weight:500;margin-top:2px;">' +
           nItems + ' ' + (nItems === 1 ? 'item' : 'items') +
@@ -1559,6 +1865,15 @@ function shouldShowHostClaimReminder() {
   var hp = (participants || []).find(function(p){ return p.name === currentDinner.hostName; });
   if (!hp) return true;
   return !hp.has_picked;
+}
+
+function pickForCtaHTML() {
+  if (!menuItems || menuItems.length === 0) return '';
+  return '<div style="padding:0 22px 12px;display:flex;justify-content:center;">' +
+    '<button onclick="openPickForSomeoneElse()" class="tab-outline-btn" style="border-color:'+T.tomato+';color:'+T.tomato+';font-weight:700;padding:9px 16px;font-size:13px;display:inline-flex;align-items:center;gap:6px;width:auto;">' +
+      '<span style="font-size:15px;line-height:1;">+</span> Pick for someone else' +
+    '</button>' +
+  '</div>';
 }
 
 function hostClaimReminderHTML() {
@@ -1671,12 +1986,7 @@ function renderHostScanSheet() {
     '<div style="padding:0 22px 14px;">' +
       '<button class="tab-grad-btn" style="width:100%;justify-content:center;padding:16px;" onclick="confirmReceiptTotals()">Confirm & open the tab →</button>' +
     '</div>';
-  // Manual fallback
-  html +=
-    '<div style="padding:6px 22px 60px;text-align:center;">' +
-      '<button onclick="setHostSheet(\'add-eaters\')" class="tab-ghost-btn" style="font-size:12.5px;color:'+T.inkSoft+';font-weight:600;">No receipt? Add items manually</button>' +
-    '</div>';
-  html += '</div>';
+  html += '<div style="padding:0 22px 60px;"></div></div>';
 
   document.getElementById('app').innerHTML = html;
   (receiptData.fees || []).forEach(function(_, idx) { renderFeeRow(idx); });
@@ -2186,146 +2496,6 @@ function renderHostShareScreen() {
       qrEl.innerHTML = '<div style="font-size:12px;color:'+T.inkSoft+';">QR loading… use Copy link.</div>';
     }
   }, 30);
-}
-
-// ── Add eaters manually sheet ───────────────────────────────────────────
-function renderHostAddEatersSheet() {
-  hostSheet = 'add-eaters';
-  stopTicker();
-  scrollTopReset();
-  var backTarget = (receiptData && receiptData.confirmed) ? 'renderHostClaim()' : 'setHostSheet(\'scan\')';
-  var phaseStep = (receiptData && receiptData.confirmed) ? 'settle' : 'scan';
-  var html = '<div class="tab-app tab-fade-in">';
-  html += progressBarHTML(phaseStep);
-  html += hostHeaderHTML({
-    title: 'Add eaters', titleSerif: false,
-    sub: 'Type in who got what.',
-    back: backTarget,
-  });
-  html +=
-    '<div style="padding:0 22px 200px;">' +
-      '<div class="tab-card">' +
-        '<div id="order-persons-list"></div>' +
-        '<button class="tab-outline-btn" style="width:100%;margin-bottom:10px;" onclick="addPersonEntry()">+ Add another person</button>' +
-        '<button class="tab-grad-btn" style="width:100%;justify-content:center;" onclick="saveAllOrders()">Save all picks</button>' +
-        '<div id="add-order-status" style="margin-top:10px;font-size:12px;color:'+T.inkSoft+';text-align:center;min-height:16px;"></div>' +
-      '</div>' +
-    '</div></div>';
-  document.getElementById('app').innerHTML = html;
-  personCount = 0;
-  addPersonEntry();
-  if (window._dinnerHostName) {
-    var firstName = document.querySelector('#order-persons-list .person-name');
-    if (firstName) firstName.value = window._dinnerHostName;
-    var firstCheck = document.querySelector('#order-persons-list .is-host-check');
-    if (firstCheck) firstCheck.checked = true;
-  }
-}
-function addPersonEntry() {
-  personCount++;
-  var list = document.getElementById('order-persons-list');
-  if (!list) return;
-  var pid = 'person-' + personCount;
-  var div = document.createElement('div');
-  div.id = pid;
-  div.style.cssText = 'background:#FFF8EE;border-radius:16px;padding:14px;margin-bottom:12px;';
-  var header = document.createElement('div');
-  header.style.cssText = 'display:flex;align-items:center;gap:8px;margin-bottom:10px;';
-  var nameInput = document.createElement('input');
-  nameInput.type = 'text';
-  nameInput.className = 'person-name tab-input';
-  nameInput.placeholder = 'First name + last initial';
-  nameInput.style.cssText = 'flex:1;padding:11px 13px;';
-  header.appendChild(nameInput);
-  if (personCount > 1) {
-    var x = document.createElement('button');
-    x.textContent = '×';
-    x.style.cssText = 'background:none;border:none;color:'+T.tomato+';font-size:22px;padding:0 4px;cursor:pointer;';
-    x.onclick = (function(p){ return function(){ removePersonEntry(p); }; })(pid);
-    header.appendChild(x);
-  }
-  div.appendChild(header);
-  var check = document.createElement('label');
-  check.style.cssText = 'display:flex;align-items:center;gap:8px;margin-bottom:10px;font-size:12.5px;color:'+T.inkSoft+';cursor:pointer;';
-  var chk = document.createElement('input');
-  chk.type = 'checkbox';
-  chk.className = 'is-host-check';
-  chk.style.cssText = 'width:16px;height:16px;cursor:pointer;';
-  check.appendChild(chk);
-  check.appendChild(document.createTextNode('This is my order (host)'));
-  div.appendChild(check);
-  var itemsList = document.createElement('div');
-  itemsList.className = 'person-items-list';
-  div.appendChild(itemsList);
-  var addBtn = document.createElement('button');
-  addBtn.className = 'tab-ghost-btn';
-  addBtn.textContent = '+ Add item';
-  addBtn.style.cssText = 'padding:6px 10px;margin-top:4px;';
-  addBtn.onclick = (function(p){ return function(){ addPersonItem(p); }; })(pid);
-  div.appendChild(addBtn);
-  list.appendChild(div);
-  addPersonItem(pid);
-}
-function removePersonEntry(pid) {
-  var el = document.getElementById(pid);
-  if (el) el.remove();
-}
-function addPersonItem(pid) {
-  var el = document.getElementById(pid);
-  if (!el) return;
-  var list = el.querySelector('.person-items-list');
-  if (!list) return;
-  var row = document.createElement('div');
-  row.style.cssText = 'display:grid;grid-template-columns:1fr 90px 32px;gap:8px;margin-bottom:8px;align-items:center;';
-  row.innerHTML =
-    '<input type="text" placeholder="Item name" class="pitem-name tab-input" style="padding:10px 12px;" />' +
-    '<input type="number" placeholder="$0.00" step="0.01" min="0" class="pitem-price tab-input" style="padding:10px 12px;text-align:right;" />' +
-    '<button class="remove-btn" onclick="removeItem(this)" style="height:38px;border:1.5px solid '+T.rule+';border-radius:10px;background:#FFF8EE;color:'+T.tomato+';font-size:18px;">×</button>';
-  list.appendChild(row);
-}
-async function saveAllOrders() {
-  var persons = document.querySelectorAll('#order-persons-list > div');
-  if (persons.length === 0) { showToast('Add at least one person'); return; }
-  var toSave = []; var valid = true;
-  persons.forEach(function(p) {
-    var nameEl = p.querySelector('.person-name');
-    var name = nameEl ? nameEl.value.trim() : '';
-    if (!name) { showToast('Enter a name for each person'); valid = false; return; }
-    var isHost = !!p.querySelector('.is-host-check').checked;
-    var items = []; var subtotal = 0;
-    p.querySelectorAll('.person-items-list > div').forEach(function(row) {
-      var n = row.querySelector('.pitem-name').value.trim();
-      var pr = parseFloat(row.querySelector('.pitem-price').value) || 0;
-      if (n || pr) { items.push({ name: n || 'Item', price: pr }); subtotal += pr; }
-    });
-    if (items.length === 0) { showToast('Add at least one item for ' + name); valid = false; return; }
-    toSave.push({ name: name, items: items, subtotal: round2(subtotal), isHost: isHost });
-  });
-  if (!valid) return;
-  var status = document.getElementById('add-order-status');
-  if (status) status.textContent = 'Saving…';
-  try {
-    // Register each as joined first (idempotent)
-    await Promise.all(toSave.map(function(o) {
-      return supabase.rpc('join_dinner', { p_dinner_id: sessionId, p_name: o.name }).catch(function(){});
-    }));
-    var results = await Promise.all(toSave.map(function(o) {
-      return supabase.rpc('upsert_order_with_items', {
-        p_dinner_id: sessionId, p_eater_name: o.name,
-        p_subtotal: o.subtotal, p_is_host: !!o.isHost, p_items: o.items,
-      });
-    }));
-    var firstError = results.find(function(r){ return r.error; });
-    if (firstError) throw firstError.error;
-    // Mark each as picked
-    toSave.forEach(function(o) {
-      supabase.rpc('mark_picked', { p_dinner_id: sessionId, p_name: o.name }).catch(function(){});
-    });
-    showToast('Saved ✓');
-    setHostSheet(null);
-  } catch (e) {
-    if (status) status.textContent = 'Error: ' + (e.message || e);
-  }
 }
 
 // ── Edit order sheet ────────────────────────────────────────────────────
@@ -2866,20 +3036,34 @@ async function showEaterView() {
   var savedName = localStorage.getItem('eater-name-' + sessionId);
   eaterCtx = { dinner: dinner, selectedIndices: [] };
   if (savedName) {
+    console.log('[EATER VIEW] returning eater "' + savedName + '" — resolving stage');
     // Backstop: fire join_dinner idempotently even on return visits.
     eaterJoinIfNeeded(savedName);
     var existing = await fetchEaterOrder(savedName);
     if (existing && existing.finalOwes != null) {
+      console.log('[EATER VIEW] order with finalOwes → settled');
       eaterCtx.name = savedName;
       eaterCtx.order = existing;
       setEaterStage('settled');
       return;
     }
     if (existing) {
+      console.log('[EATER VIEW] order without finalOwes → waiting');
       eaterCtx.name = savedName;
       eaterCtx.order = existing;
       setEaterStage('waiting');
       return;
+    }
+    // No order yet — fetch participants to disambiguate "joined-only" vs
+    // "marked-picked-but-no-order" (which would be a bug worth knowing about).
+    var parts = await fetchParticipants(sessionId);
+    var part = (parts || []).find(function(p){ return p.name === savedName; });
+    if (part && part.has_picked) {
+      console.warn('[EATER VIEW] participant.has_picked is true but no order row found for "' + savedName + '" — likely a stale mark_picked. Falling back to claiming.');
+    } else if (part) {
+      console.log('[EATER VIEW] participant joined, no order → claiming');
+    } else {
+      console.log('[EATER VIEW] no participant row, but savedName present → claiming');
     }
     eaterCtx.prefillName = savedName;
     eaterCtx.name = savedName;
@@ -2890,6 +3074,7 @@ async function showEaterView() {
     return;
   }
   // First visit: gate behind an explicit Join action
+  console.log('[EATER VIEW] no savedName → join gate');
   setEaterStage('join');
 }
 
@@ -3010,7 +3195,7 @@ function renderEaterStage(animate) {
     }
   } else if (eaterStage === 'waiting') {
     headlineHTML = 'Picks locked in 🔒';
-    sublineHTML = 'Now waiting on ' + escapeHtml(hostFirst) + ' to settle up. We’ll buzz you when it’s ready.';
+    sublineHTML = 'Now waiting on ' + escapeHtml(hostFirst) + ' to settle up — should be quick.';
   } else {
     headlineHTML = 'All set 🎉';
     sublineHTML = 'Here’s your share. Pick how you wanna pay 👇';
@@ -3220,6 +3405,7 @@ function updateEaterRunningTotal() {
 }
 
 async function submitEaterOrder() {
+  console.log('[EATER SUBMIT] start');
   var nameEl = document.getElementById('guest-name');
   var name = nameEl ? nameEl.value.trim() : '';
   if (!name) { showToast('Drop your name first'); return; }
@@ -3242,34 +3428,88 @@ async function submitEaterOrder() {
     });
     if (items.length === 0) { showToast('Add at least one item'); return; }
   }
+  console.log('[EATER SUBMIT] calling upsert_order_with_items with', items.length, 'items for "' + name + '"');
+
   var sendBtn = document.querySelector('.tab-sticky-bar .tab-grad-btn');
-  if (sendBtn) { sendBtn.disabled = true; sendBtn.textContent = 'Sending…'; }
+  var resetSendBtn = function() {
+    if (!sendBtn) return;
+    sendBtn.disabled = false;
+    sendBtn.innerHTML = 'Send picks' +
+      ' <svg width="13" height="13" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;"><path d="M5 3l5 5-5 5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>';
+  };
+  if (sendBtn) {
+    sendBtn.disabled = true;
+    sendBtn.innerHTML =
+      '<span style="display:inline-flex;align-items:center;gap:8px;">' +
+        '<span style="width:14px;height:14px;border:2px solid currentColor;border-top-color:transparent;border-radius:50%;animation:spin 0.7s linear infinite;display:inline-block;"></span>' +
+        'Locking in… 🔒' +
+      '</span>';
+  }
+
   try {
-    // Ensure participant exists (idempotent) before submitting picks
-    try { await supabase.rpc('join_dinner', { p_dinner_id: sessionId, p_name: name }); } catch (e) {}
+    // 1) Make sure the participant row exists. Idempotent, but if it fails
+    //    that's still a strong diagnostic — log loudly, don't abort the order.
+    try {
+      var rj = await supabase.rpc('join_dinner', { p_dinner_id: sessionId, p_name: name });
+      if (rj && rj.error) console.error('[EATER SUBMIT] join_dinner error:', rj.error);
+      else console.log('[EATER SUBMIT] join_dinner ok');
+    } catch (e) { console.error('[EATER SUBMIT] join_dinner threw:', e); }
+
+    // 2) The actual order write. If this fails, everything stops.
     var r1 = await supabase.rpc('upsert_order_with_items', {
       p_dinner_id: sessionId, p_eater_name: name,
       p_subtotal: round2(subtotal), p_is_host: false, p_items: items,
     });
-    if (r1.error) throw r1.error;
+    if (r1 && r1.error) {
+      console.error('[EATER SUBMIT] upsert_order_with_items failed:', r1.error);
+      throw r1.error;
+    }
+    console.log('[EATER SUBMIT] upsert success, returned:', r1 && r1.data);
+
+    // 3) Pin the claimed indices on the dinner.menu_items[].claimedBy
     if (hasMenu) {
       var r2 = await supabase.rpc('claim_menu_items', {
         p_dinner_id: sessionId, p_eater_name: name, p_indices: indices,
       });
-      if (r2.error) throw r2.error;
+      if (r2 && r2.error) {
+        console.error('[EATER SUBMIT] claim_menu_items failed:', r2.error);
+        throw r2.error;
+      }
+      console.log('[EATER SUBMIT] claim_menu_items ok');
     }
-    // Flip participant.has_picked → true (best-effort, doesn't block UI)
-    supabase.rpc('mark_picked', { p_dinner_id: sessionId, p_name: name }).catch(function() {});
-    localStorage.setItem('eater-name-' + sessionId, name);
-    localStorage.setItem('last-eater-session', sessionId);
-    // Refresh orders for social proof on settled screen later
-    orders = await fetchOrdersForDinner(sessionId);
+
+    // 4) Best-effort: flip participant.has_picked → true. New signature has
+    //    a 3rd arg (picked_by_host) with default false, so the 2-arg call
+    //    still works. Don't block the UI on it.
+    supabase.rpc('mark_picked', { p_dinner_id: sessionId, p_name: name })
+      .then(function(r) {
+        if (r && r.error) console.error('[EATER SUBMIT] mark_picked error:', r.error);
+        else console.log('[EATER SUBMIT] mark_picked ok');
+      })
+      .catch(function(e) { console.error('[EATER SUBMIT] mark_picked threw:', e); });
+
+    // 5) Persist locally so refresh routes to waiting.
+    try {
+      localStorage.setItem('eater-name-' + sessionId, name);
+      localStorage.setItem('last-eater-session', sessionId);
+    } catch (e) { console.warn('[EATER SUBMIT] localStorage write failed:', e); }
+
+    // 6) Stage transition — DON'T wait on social-proof refetch. We have the
+    //    items + subtotal in memory; render waiting immediately.
     eaterCtx.name = name;
     eaterCtx.order = { items: items, subtotal: subtotal };
+    console.log('[EATER SUBMIT] transitioning to waiting');
     setEaterStage('waiting');
+
+    // 7) Background refresh for the settled-stage social proof later.
+    fetchOrdersForDinner(sessionId)
+      .then(function(o) { orders = o; })
+      .catch(function(e) { console.warn('[EATER SUBMIT] post-submit orders refresh failed:', e); });
   } catch (e) {
-    if (sendBtn) { sendBtn.disabled = false; sendBtn.textContent = 'Send picks'; }
-    showToast('Error: ' + (e.message || e));
+    console.error('[EATER SUBMIT] failed:', e);
+    resetSendBtn();
+    var msg = (e && (e.message || e.hint || e.details)) || 'Try again in a moment.';
+    showToast("Couldn't save your picks — " + msg);
   }
 }
 
@@ -3311,8 +3551,11 @@ function renderEaterWaitingBody() {
         '<div style="margin-top:4px;">' + moneyHTML(est) + '</div>' +
       '</div>' +
     '</div>' +
-    '<button class="tab-outline-btn" style="margin-top:14px;width:auto;padding:11px 22px;display:inline-flex;align-items:center;gap:8px;" onclick="editEaterOrder()">' +
-      '<span style="font-size:13px;">✎</span> Edit my picks' +
+    '<div style="margin-top:14px;font-size:13px;color:'+T.inkSoft+';font-weight:500;max-width:280px;line-height:1.45;">' +
+      'Stretch your legs. Get a refill. We’ve got it from here. ☕' +
+    '</div>' +
+    '<button class="tab-outline-btn" style="margin-top:18px;width:auto;padding:12px 22px;display:inline-flex;align-items:center;gap:8px;border-color:'+T.tomato+';color:'+T.tomato+';font-weight:700;" onclick="editEaterOrder()">' +
+      '<span style="font-size:14px;">✎</span> Edit my picks' +
     '</button>';
   html += '</div>';
   return html;
@@ -3520,8 +3763,9 @@ Object.assign(window, {
   showHostDashboard, showNewDinnerForm, selectPay, createDinner, deleteDinner, goToHostDinner,
   showDeleteTabConfirm, dismissDeleteTab, confirmDeleteTab,
   // Host dinner navigation
-  setHostSheet, renderHostClaim, copyEaterLink, copyEaterLinkFromShare, shareEaterLink, clearOrders, toggleHostItemClaim,
-  toggleHostGroup, navigateToStep,
+  setHostSheet, renderHostClaim, copyEaterLink, copyEaterLinkFromShare, shareEaterLink,
+  sharePopupInPlace, showShareFallbackModal, dismissShareFallback,
+  clearOrders, toggleHostItemClaim, toggleHostGroup, navigateToStep,
   // Scan sheet
   scanReceipt, updateMenuItemName, updateMenuItemPrice, removeMenuItemByIdx, addMenuItem,
   setTipMode, setReceiptTip, updateTipFromPct, updateReceiptField,
@@ -3530,7 +3774,10 @@ Object.assign(window, {
   toggleFoodExpanded, expandFoodAndScroll, focusField,
   setFeeProportional,
   // Add-eaters sheet
-  addPersonEntry, removePersonEntry, addPersonItem, saveAllOrders,
+  // Pick-for-someone-else modal
+  openPickForSomeoneElse, dismissPickForModal,
+  pickForChooseExisting, pickForAddNew, pickForBackToWho,
+  togglePickForClaim, pickForSavePicks,
   // Edit-order sheet
   addEditItem, saveEditOrder, removeItem, editOrderInline,
   // Settle / mismatch / paid
