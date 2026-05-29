@@ -3625,6 +3625,26 @@ function renderEaterFullHero() {
     '</div>';
 }
 
+// Resolve the eater's name from the most reliable source first.
+// In the compact-header layout the #guest-name input only exists when the
+// eater opted into editing — so the DOM is NOT the source of truth.
+function getEaterName() {
+  var el = document.getElementById('guest-name');
+  if (el) {
+    var v = (el.value || '').trim();
+    if (v) return v;
+  }
+  if (eaterCtx && eaterCtx.name) return String(eaterCtx.name).trim();
+  if (eaterCtx && eaterCtx.prefillName) return String(eaterCtx.prefillName).trim();
+  if (sessionId) {
+    try {
+      var stored = localStorage.getItem('eater-name-' + sessionId);
+      if (stored) return String(stored).trim();
+    } catch (e) {}
+  }
+  return '';
+}
+
 // Inline name-editing helpers. The compact strip stays put; only the
 // greeting line swaps in an input. Saves via join_dinner (idempotent),
 // auto-renames on collision so we never overwrite another diner.
@@ -3842,8 +3862,11 @@ function updateEaterRunningTotal() {
 
 async function submitEaterOrder() {
   console.log('[EATER SUBMIT] start');
-  var nameEl = document.getElementById('guest-name');
-  var name = nameEl ? nameEl.value.trim() : '';
+  // The #guest-name input is only mounted while the eater is editing their
+  // name in the compact-header layout. Fall back to the durable sources
+  // (module state → localStorage) so the typical "just tap Send picks"
+  // path works without any DOM input present.
+  var name = getEaterName();
   if (!name) { showToast('Drop your name first'); return; }
   var hasMenu = (menuItems || []).length > 0;
   var items = []; var subtotal = 0;
