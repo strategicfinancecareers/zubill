@@ -3500,66 +3500,12 @@ function renderEaterStage(animate) {
   if (!d) return;
   if (eaterStage === 'join') { renderEaterJoinGate(); return; }
   scrollTopReset();
-  var v = vibeForDinner(d);
-  var hostName = d.hostName || 'your host';
-  var hostFirst = (hostName.split(/\s+/)[0]) || 'Zu';
-  var meName = eaterCtx.name || eaterCtx.prefillName || '';
-  var meFirst = (meName || '').split(/\s+/)[0] || 'friend';
-  var step = eaterStage === 'claiming' ? '1' : eaterStage === 'waiting' ? '2' : '3';
 
-  var headlineHTML, sublineHTML;
-  if (eaterStage === 'claiming') {
-    if (meName) {
-      headlineHTML = 'Hi ' + escapeHtml(meFirst) + ' <span style="font-family:'+T.serif+';font-style:italic;font-weight:400;">—</span>';
-      sublineHTML = 'What did you eat tonight?';
-    } else {
-      headlineHTML = 'What did you eat<br>tonight?';
-      sublineHTML = 'Drop your name, then tap your picks.';
-    }
-  } else if (eaterStage === 'waiting') {
-    headlineHTML = 'Picks locked in 🔒';
-    sublineHTML = 'Now waiting on ' + escapeHtml(hostFirst) + ' to settle up — should be quick.';
-  } else {
-    headlineHTML = 'All set 🎉';
-    sublineHTML = 'Here’s your share. Pick how you wanna pay 👇';
-  }
-
-  var hero =
-    '<div style="position:relative;background:'+HERO_GRAD+';color:#FFF6EC;padding:14px 22px 64px;' +
-      'border-bottom-left-radius:36px;border-bottom-right-radius:36px;overflow:hidden;">' +
-      '<div style="position:absolute;top:-80px;right:-50px;width:240px;height:240px;border-radius:999px;' +
-        'background:radial-gradient(circle, rgba(255,220,160,0.55), transparent 70%);pointer-events:none;"></div>' +
-      '<div style="position:absolute;bottom:-60px;left:-40px;width:200px;height:200px;border-radius:999px;' +
-        'background:radial-gradient(circle, rgba(255,139,109,0.4), transparent 70%);pointer-events:none;"></div>' +
-      '<div style="position:relative;display:flex;justify-content:space-between;align-items:center;padding-top:14px;">' +
-        '<div style="display:flex;align-items:center;gap:10px;">' +
-          avatarHTML(hostName, { size: 32, ring: 'rgba(255,246,236,0.9)' }) +
-          '<div>' +
-            '<div style="font-size:10px;letter-spacing:1.2px;text-transform:uppercase;font-weight:700;opacity:0.85;">' +
-              escapeHtml(hostFirst) + ' invited you to</div>' +
-            '<div style="font-family:'+T.serif+';font-style:italic;font-size:22px;font-weight:400;margin-top:2px;letter-spacing:-0.3px;line-height:1;">' +
-              escapeHtml(d.restaurant) + '</div>' +
-          '</div>' +
-        '</div>' +
-        '<div style="font-size:11px;opacity:0.85;font-weight:600;text-align:right;line-height:1.4;">' +
-          escapeHtml(v.tag) + '<br><span style="opacity:0.7;">' + escapeHtml(formatDate(d.date)) + '</span>' +
-        '</div>' +
-      '</div>' +
-      '<div style="position:relative;margin-top:28px;">' +
-        '<div style="font-family:'+T.sans+';font-size:38px;font-weight:700;letter-spacing:-1.2px;line-height:1;margin-bottom:8px;">' +
-          headlineHTML + '</div>' +
-        '<div style="font-size:15.5px;font-weight:500;opacity:0.92;line-height:1.35;">' + sublineHTML + '</div>' +
-      '</div>' +
-      '<div style="position:relative;margin-top:22px;display:flex;align-items:center;justify-content:space-between;' +
-        'background:rgba(255,246,236,0.15);border-radius:16px;padding:8px 12px;backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);">' +
-        '<div style="font-size:11px;font-weight:600;opacity:0.95;">' +
-          (orders.length > 0
-            ? (orders.length + ' ' + (orders.length === 1 ? 'eater' : 'eaters') + ' at the table')
-            : 'You’re first to claim') +
-        '</div>' +
-        '<div style="font-size:10.5px;font-weight:700;letter-spacing:0.6px;text-transform:uppercase;opacity:0.85;">Step ' + step + '/3</div>' +
-      '</div>' +
-    '</div>';
+  // Hero choice: compact sticky strip for claiming, full gradient hero for
+  // the more celebratory waiting / settled stages.
+  var hero = (eaterStage === 'claiming')
+    ? renderEaterCompactStrip()
+    : renderEaterFullHero();
 
   var body = '', bottomBar = '';
   if (eaterStage === 'claiming') {
@@ -3595,17 +3541,184 @@ function renderEaterStage(animate) {
   }
 }
 
+// Compact sticky strip for the claiming stage — context without eating the screen.
+function renderEaterCompactStrip() {
+  var d = eaterCtx.dinner;
+  var v = vibeForDinner(d);
+  var hostName = d.hostName || 'your host';
+  var hostFirst = (hostName.split(/\s+/)[0]) || 'Zu';
+  var dateLabel = formatDate(d.date);
+  return '<div class="eater-compact-strip" style="position:sticky;top:0;z-index:50;background:'+HERO_GRAD+
+    ';color:#FFF6EC;padding:14px 18px;display:flex;align-items:center;gap:12px;' +
+    'border-bottom-left-radius:22px;border-bottom-right-radius:22px;' +
+    'box-shadow:0 10px 22px -10px rgba(229,75,60,0.45);">' +
+    avatarHTML(hostName, { size: 38, ring: 'rgba(255,246,236,0.9)' }) +
+    '<div style="flex:1;min-width:0;">' +
+      '<div style="font-size:9.5px;letter-spacing:1.2px;text-transform:uppercase;font-weight:700;opacity:0.85;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' +
+        escapeHtml(hostFirst.toUpperCase()) + ' invited you to' +
+      '</div>' +
+      '<div style="font-family:'+T.serif+';font-style:italic;font-size:18px;font-weight:400;margin-top:1px;letter-spacing:-0.3px;line-height:1.15;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' +
+        escapeHtml(d.restaurant) +
+      '</div>' +
+    '</div>' +
+    '<div style="display:flex;flex-direction:column;align-items:flex-end;gap:5px;flex-shrink:0;">' +
+      '<span style="font-size:10px;font-weight:700;letter-spacing:0.3px;background:rgba(255,246,236,0.22);' +
+        'padding:3px 9px;border-radius:999px;backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);white-space:nowrap;">' +
+        escapeHtml(v.tag) +
+      '</span>' +
+      '<span style="font-size:9.5px;font-weight:700;letter-spacing:0.6px;opacity:0.85;">' +
+        '1/3' + (dateLabel ? ' · ' + escapeHtml(dateLabel) : '') +
+      '</span>' +
+    '</div>' +
+  '</div>';
+}
+
+// Existing full gradient hero, used for waiting + settled stages.
+function renderEaterFullHero() {
+  var d = eaterCtx.dinner;
+  var v = vibeForDinner(d);
+  var hostName = d.hostName || 'your host';
+  var hostFirst = (hostName.split(/\s+/)[0]) || 'Zu';
+  var step = eaterStage === 'waiting' ? '2' : '3';
+  var headlineHTML, sublineHTML;
+  if (eaterStage === 'waiting') {
+    headlineHTML = 'Picks locked in 🔒';
+    sublineHTML = 'Now waiting on ' + escapeHtml(hostFirst) + ' to settle up — should be quick.';
+  } else {
+    headlineHTML = 'All set 🎉';
+    sublineHTML = 'Here’s your share. Pick how you wanna pay 👇';
+  }
+  return '<div style="position:relative;background:'+HERO_GRAD+';color:#FFF6EC;padding:14px 22px 64px;' +
+      'border-bottom-left-radius:36px;border-bottom-right-radius:36px;overflow:hidden;">' +
+      '<div style="position:absolute;top:-80px;right:-50px;width:240px;height:240px;border-radius:999px;' +
+        'background:radial-gradient(circle, rgba(255,220,160,0.55), transparent 70%);pointer-events:none;"></div>' +
+      '<div style="position:absolute;bottom:-60px;left:-40px;width:200px;height:200px;border-radius:999px;' +
+        'background:radial-gradient(circle, rgba(255,139,109,0.4), transparent 70%);pointer-events:none;"></div>' +
+      '<div style="position:relative;display:flex;justify-content:space-between;align-items:center;padding-top:14px;">' +
+        '<div style="display:flex;align-items:center;gap:10px;">' +
+          avatarHTML(hostName, { size: 32, ring: 'rgba(255,246,236,0.9)' }) +
+          '<div>' +
+            '<div style="font-size:10px;letter-spacing:1.2px;text-transform:uppercase;font-weight:700;opacity:0.85;">' +
+              escapeHtml(hostFirst) + ' invited you to</div>' +
+            '<div style="font-family:'+T.serif+';font-style:italic;font-size:22px;font-weight:400;margin-top:2px;letter-spacing:-0.3px;line-height:1;">' +
+              escapeHtml(d.restaurant) + '</div>' +
+          '</div>' +
+        '</div>' +
+        '<div style="font-size:11px;opacity:0.85;font-weight:600;text-align:right;line-height:1.4;">' +
+          escapeHtml(v.tag) + '<br><span style="opacity:0.7;">' + escapeHtml(formatDate(d.date)) + '</span>' +
+        '</div>' +
+      '</div>' +
+      '<div style="position:relative;margin-top:28px;">' +
+        '<div style="font-family:'+T.sans+';font-size:38px;font-weight:700;letter-spacing:-1.2px;line-height:1;margin-bottom:8px;">' +
+          headlineHTML + '</div>' +
+        '<div style="font-size:15.5px;font-weight:500;opacity:0.92;line-height:1.35;">' + sublineHTML + '</div>' +
+      '</div>' +
+      '<div style="position:relative;margin-top:22px;display:flex;align-items:center;justify-content:space-between;' +
+        'background:rgba(255,246,236,0.15);border-radius:16px;padding:8px 12px;backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);">' +
+        '<div style="font-size:11px;font-weight:600;opacity:0.95;">' +
+          (orders.length > 0
+            ? (orders.length + ' ' + (orders.length === 1 ? 'eater' : 'eaters') + ' at the table')
+            : 'You’re first to claim') +
+        '</div>' +
+        '<div style="font-size:10.5px;font-weight:700;letter-spacing:0.6px;text-transform:uppercase;opacity:0.85;">Step ' + step + '/3</div>' +
+      '</div>' +
+    '</div>';
+}
+
+// Inline name-editing helpers. The compact strip stays put; only the
+// greeting line swaps in an input. Saves via join_dinner (idempotent),
+// auto-renames on collision so we never overwrite another diner.
+function startEaterNameEdit() {
+  eaterCtx.nameEditing = true;
+  renderEaterStage(false);
+  setTimeout(function() {
+    var el = document.getElementById('guest-name');
+    if (el) { el.focus(); try { el.select(); } catch(e){} }
+  }, 80);
+}
+function cancelEaterNameEdit() {
+  eaterCtx.nameEditing = false;
+  renderEaterStage(false);
+}
+async function saveEaterName() {
+  var nameEl = document.getElementById('guest-name');
+  var newName = nameEl ? nameEl.value.trim() : '';
+  if (!newName) { showToast('Enter your name'); return; }
+  var oldName = eaterCtx.name || '';
+  if (newName === oldName) {
+    eaterCtx.nameEditing = false;
+    renderEaterStage(false);
+    return;
+  }
+  var finalName = newName;
+  try {
+    var freshParts = await fetchParticipants(sessionId);
+    var conflict = freshParts.find(function(p) {
+      return p.name && p.name.toLowerCase() === finalName.toLowerCase() && p.name !== oldName;
+    });
+    if (conflict) {
+      var counter = 2;
+      while (freshParts.find(function(p) {
+        return p.name && p.name.toLowerCase() === (newName + ' ' + counter).toLowerCase();
+      })) { counter++; }
+      finalName = newName + ' ' + counter;
+      showToast('That name’s taken — using “' + finalName + '” instead');
+    }
+  } catch (e) { console.warn('[EATER NAME] participant fetch failed:', e); }
+  try {
+    var rj = await supabase.rpc('join_dinner', { p_dinner_id: sessionId, p_name: finalName });
+    if (rj && rj.error) console.warn('[EATER NAME] join_dinner error:', rj.error);
+  } catch (e) { console.warn('[EATER NAME] join_dinner threw:', e); }
+  _eaterJoinedNames[finalName] = true;
+  try {
+    localStorage.setItem('eater-name-' + sessionId, finalName);
+    localStorage.setItem('last-eater-session', sessionId);
+  } catch (e) {}
+  eaterCtx.name = finalName;
+  eaterCtx.prefillName = finalName;
+  eaterCtx.nameEditing = false;
+  // Re-derive selectedIndices from any items already claimed under the new name
+  eaterCtx.selectedIndices = [];
+  (menuItems || []).forEach(function(m, i) { if (m.claimedBy === finalName) eaterCtx.selectedIndices.push(i); });
+  renderEaterStage(false);
+}
+
 function renderEaterClaimingBody() {
   var hasMenu = (menuItems || []).length > 0;
   var meName = eaterCtx.name || eaterCtx.prefillName || '';
-  var html = '<div style="padding:0 16px 16px;margin-top:-46px;">';
-  html +=
-    '<div class="tab-card" style="margin-bottom:14px;padding:14px 16px;">' +
-      '<label class="tab-label" style="margin-bottom:6px;">Your name</label>' +
-      '<input type="text" id="guest-name" class="tab-input" placeholder="First name + last initial" value="'+attr(meName)+'"' +
-        (meName ? ' readonly' : '') + ' oninput="syncEaterName()" />' +
-      '<div style="font-size:11px;color:'+T.inkDim+';margin-top:6px;font-weight:500;">First name + last initial keeps everyone unique.</div>' +
-    '</div>';
+  var meFirst = (meName || '').split(/\s+/)[0] || 'friend';
+  var nameEditMode = !meName || !!eaterCtx.nameEditing;
+
+  var html = '<div style="padding:14px 16px 16px;">';
+
+  // Inline greeting + name affordance (or visible input fallback if no name)
+  if (!nameEditMode) {
+    html +=
+      '<div style="padding:8px 6px 14px;">' +
+        '<div style="font-family:'+T.sans+';font-size:30px;font-weight:700;letter-spacing:-0.9px;line-height:1.1;color:'+T.ink+';">' +
+          'Hi ' + escapeHtml(meFirst) + ' <span style="font-family:'+T.serif+';font-style:italic;font-weight:400;color:'+T.tomato+';">— what did you eat?</span>' +
+        '</div>' +
+        '<button onclick="startEaterNameEdit()" class="tab-ghost-btn" style="margin-top:6px;padding:0;font-size:12.5px;color:'+T.inkSoft+';font-weight:600;">' +
+          '✎ not ' + escapeHtml(meFirst) + '?' +
+        '</button>' +
+      '</div>';
+  } else {
+    html +=
+      '<div style="padding:8px 6px 14px;">' +
+        '<div style="font-family:'+T.sans+';font-size:26px;font-weight:700;letter-spacing:-0.7px;line-height:1.15;color:'+T.ink+';margin-bottom:12px;">' +
+          (meName ? 'What name should we use?' : 'What’s your name?') +
+        '</div>' +
+        '<div style="display:flex;gap:8px;align-items:stretch;">' +
+          '<input type="text" id="guest-name" class="tab-input" placeholder="First name + last initial" value="'+attr(meName)+'" style="flex:1;" onkeydown="if(event.key===\'Enter\')saveEaterName()" />' +
+          '<button onclick="saveEaterName()" class="tab-grad-btn" style="padding:12px 18px;">' +
+            (meName ? 'Save' : 'Join') +
+          '</button>' +
+        '</div>' +
+        (meName
+          ? '<button onclick="cancelEaterNameEdit()" class="tab-ghost-btn" style="margin-top:6px;padding:0;font-size:12px;color:'+T.inkSoft+';font-weight:600;">Cancel</button>'
+          : '<div style="font-size:11px;color:'+T.inkDim+';margin-top:6px;font-weight:500;">First name + last initial keeps you unique.</div>') +
+      '</div>';
+  }
 
   if (hasMenu) {
     html += '<div style="display:flex;flex-direction:column;gap:8px;">';
@@ -4113,6 +4226,7 @@ Object.assign(window, {
   // Eater
   submitEaterOrder, toggleEaterClaim, updateEaterRunningTotal, syncEaterName,
   joinTheTable,
+  startEaterNameEdit, cancelEaterNameEdit, saveEaterName,
   addItem, editEaterOrder, payViaZelle, payViaVenmo,
 });
 </script>
