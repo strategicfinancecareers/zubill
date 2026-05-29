@@ -200,6 +200,9 @@ var personCount = 0;
 var editItemCount = 0;
 var selectedPayMethod = 'Zelle';
 var foodExpanded = false; // host scan-review: food zone collapsed by default
+var expandedGroups = {}; // host claim view: groupId → currently expanded?
+var eaterPollTimer = null;     // belt-and-suspenders poll if realtime drops on waiting
+var eaterSubscribeTs = null;
 var eaterStage = null; // 'claiming' | 'waiting' | 'settled'
 var eaterCtx = {};
 var eaterFirstRender = true;
@@ -1364,27 +1367,13 @@ function renderHostClaim() {
   var bodyHTML = '';
   if (menuExists) {
     bodyHTML += '<div style="padding:0 16px 200px;display:flex;flex-direction:column;gap:8px;">';
-    menuItems.forEach(function(item, idx) {
-      var claimer = item.claimedBy;
-      var isMine = !!(claimer && claimer === hostName);
-      var isOther = !!(claimer && !isMine);
-      var tapAttr = isOther ? '' : ' onclick="toggleHostItemClaim('+idx+')"';
-      var rowClass = 'tab-item-row' + (isMine ? ' is-mine' : '') + (isOther ? ' is-locked' : '');
-      bodyHTML +=
-        '<div class="'+rowClass+'"'+tapAttr+'>' +
-          '<div class="tab-emoji-chip">'+emojiForItem(item.name)+'</div>' +
-          '<div style="flex:1;min-width:0;">' +
-            '<div style="font-size:14.5px;font-weight:600;letter-spacing:-0.2px;color:'+T.ink+';overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">'+escapeHtml(item.name)+'</div>' +
-            '<div style="display:flex;align-items:center;gap:8px;margin-top:5px;">' +
-              (claimer
-                ? (avatarStackHTML([claimer], { size: 20 }) +
-                   '<span style="font-size:11.5px;color:'+T.inkDim+';font-weight:500;">' +
-                   escapeHtml(claimer) + (isMine ? ' (you)' : '') + '</span>')
-                : pillHTML('Unclaimed', T.tomato, 'rgba(229,75,60,0.1)')) +
-            '</div>' +
-          '</div>' +
-          '<div style="text-align:right;">'+moneyHTML(item.price)+'</div>' +
-        '</div>';
+    var slots = groupMenuItemsByGroupId(menuItems);
+    slots.forEach(function(slot) {
+      if (slot.isGroup) {
+        bodyHTML += renderHostGroupCard(slot, hostName);
+      } else {
+        bodyHTML += renderHostSingleItemRow(slot.item, slot.index, hostName);
+      }
     });
     bodyHTML +=
       '<div style="display:flex;justify-content:center;margin-top:6px;">' +
@@ -1443,7 +1432,8 @@ function renderHostClaim() {
 
   document.getElementById('app').innerHTML =
     '<div class="tab-app tab-fade-in">' +
-      progressBarHTML('settle') + headerHTML + tickerSection + progressSection + bodyHTML + runningTallyHTML() + stickyHTML +
+      progressBarHTML('settle') + headerHTML + tickerSection + progressSection +
+      hostClaimReminderHTML() + bodyHTML + runningTallyHTML() + stickyHTML +
     '</div>';
 
   startTicker();
@@ -1488,6 +1478,95 @@ function runningTallyHTML() {
       '<div style="margin-top:10px;font-size:11.5px;color:'+T.inkDim+';font-weight:500;text-align:center;line-height:1.4;">' +
         'Tax & tip distribute when you tap <strong style="color:'+T.inkSoft+';">Settle up</strong>.' +
       '</div>' +
+    '</div>' +
+  '</div>';
+}
+
+function renderHostSingleItemRow(item, idx, hostName) {
+  var claimer = item.claimedBy;
+  var isMine = !!(claimer && claimer === hostName);
+  var isOther = !!(claimer && !isMine);
+  var tapAttr = isOther ? '' : ' onclick="toggleHostItemClaim('+idx+')"';
+  var rowClass = 'tab-item-row' + (isMine ? ' is-mine' : '') + (isOther ? ' is-locked' : '');
+  return '<div class="'+rowClass+'"'+tapAttr+'>' +
+    '<div class="tab-emoji-chip">'+emojiForItem(item.name)+'</div>' +
+    '<div style="flex:1;min-width:0;">' +
+      '<div style="font-size:14.5px;font-weight:600;letter-spacing:-0.2px;color:'+T.ink+';overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">'+escapeHtml(item.name)+'</div>' +
+      '<div style="display:flex;align-items:center;gap:8px;margin-top:5px;">' +
+        (claimer
+          ? (avatarStackHTML([claimer], { size: 20 }) +
+             '<span style="font-size:11.5px;color:'+T.inkDim+';font-weight:500;">' +
+             escapeHtml(claimer) + (isMine ? ' (you)' : '') + '</span>')
+          : pillHTML('Unclaimed', T.tomato, 'rgba(229,75,60,0.1)')) +
+      '</div>' +
+    '</div>' +
+    '<div style="text-align:right;">'+moneyHTML(item.price)+'</div>' +
+  '</div>';
+}
+
+function renderHostGroupCard(g, hostName) {
+  var gid = g.groupId;
+  var expanded = !!expandedGroups[gid];
+  var totalCount = g.items.length;
+  var claimers = g.items.filter(function(it){ return it.claimedBy; }).map(function(it){ return it.claimedBy; });
+  var claimedCount = claimers.length;
+  var perUnit = g.perUnit;
+  var fullyClaimed = claimedCount === totalCount;
+  var html = '<div class="tab-card" style="padding:0;cursor:pointer;'+(fullyClaimed?'background:#FFF8F0;':'')+'" onclick="toggleHostGroup(\''+attr(gid)+'\')">' +
+    '<div style="padding:12px 14px;display:flex;align-items:center;gap:14px;">' +
+      '<div class="tab-emoji-chip">'+emojiForItem(g.name)+'</div>' +
+      '<div style="flex:1;min-width:0;">' +
+        '<div style="font-size:14.5px;font-weight:600;letter-spacing:-0.2px;color:'+T.ink+';overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">'+escapeHtml(g.name)+'</div>' +
+        '<div style="display:flex;align-items:center;gap:8px;margin-top:5px;flex-wrap:wrap;">' +
+          '<span style="font-size:11.5px;color:'+T.inkDim+';font-weight:500;">'+totalCount+' × $'+perUnit.toFixed(2)+' · '+claimedCount+'/'+totalCount+' claimed</span>' +
+          (claimers.length > 0 ? avatarStackHTML(claimers, { size: 20, max: 5 }) : '') +
+        '</div>' +
+      '</div>' +
+      '<div style="text-align:right;flex-shrink:0;display:flex;flex-direction:column;align-items:flex-end;gap:6px;">' +
+        moneyHTML(perUnit) +
+        '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="'+T.inkDim+'" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="transform:rotate('+(expanded?'180deg':'0deg')+');transition:transform 0.2s ease;"><polyline points="6 9 12 15 18 9"/></svg>' +
+      '</div>' +
+    '</div>';
+  if (expanded) {
+    html += '<div style="padding:0 14px 6px;border-top:1px solid '+T.ruleSoft+';">';
+    g.items.forEach(function(item, i) {
+      var idx = g.indices[i];
+      var claimer = item.claimedBy;
+      var isMine = !!(claimer && claimer === hostName);
+      var isOther = !!(claimer && !isMine);
+      var tap = isOther ? '' : ' onclick="event.stopPropagation();toggleHostItemClaim('+idx+')"';
+      html += '<div'+tap+' style="display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid '+T.ruleSoft+';cursor:'+(isOther?'default':'pointer')+';">' +
+        '<div style="font-size:10.5px;font-weight:700;color:'+T.inkDim+';letter-spacing:0.4px;flex-shrink:0;width:36px;">'+(i+1)+'/'+totalCount+'</div>' +
+        '<div style="flex:1;min-width:0;font-size:13px;">' +
+          (claimer
+            ? '<div style="display:flex;align-items:center;gap:7px;">' +
+                avatarHTML(claimer, { size: 20 }) +
+                '<span style="color:'+T.ink+';font-weight:500;">'+escapeHtml(claimer)+(isMine?' (you)':'')+'</span>'+
+              '</div>'
+            : '<span style="color:'+T.inkDim+';font-weight:500;font-style:italic;">Unclaimed — tap to claim</span>') +
+        '</div>' +
+        '<div style="font-size:13px;font-weight:600;color:'+T.inkSoft+';flex-shrink:0;">$'+perUnit.toFixed(2)+'</div>' +
+      '</div>';
+    });
+    html += '</div>';
+  }
+  html += '</div>';
+  return html;
+}
+
+function shouldShowHostClaimReminder() {
+  if (!currentDinner || !currentDinner.hostName) return false;
+  var hp = (participants || []).find(function(p){ return p.name === currentDinner.hostName; });
+  if (!hp) return true;
+  return !hp.has_picked;
+}
+
+function hostClaimReminderHTML() {
+  if (!shouldShowHostClaimReminder() || !(menuItems && menuItems.length > 0)) return '';
+  return '<div style="padding:0 22px 12px;">' +
+    '<div style="background:'+T.paper+';border-radius:14px;padding:10px 14px;font-size:12.5px;color:'+T.inkSoft+';font-weight:500;display:flex;align-items:center;gap:8px;line-height:1.3;">' +
+      '<span style="font-size:16px;flex-shrink:0;">📝</span>' +
+      '<span>Tap items below to claim what you ate.</span>' +
     '</div>' +
   '</div>';
 }
@@ -1793,6 +1872,92 @@ function setFeeProportional(idx, proportional) {
   renderHostScanSheet();
 }
 
+// Parse a "5 Peri Chicken (34.00)" style entry into N individual claimable rows.
+// Returns an array with at least one item; ungrouped entries pass through unchanged.
+function expandGroupedItem(item) {
+  var name = String((item && item.name) || '').trim();
+  var price = parseFloat(item && item.price) || 0;
+  var m = name.match(/^(\d+)\s+(.+)$/);
+  if (!m) return [Object.assign({ claimedBy: null }, item || {}, { name: name, price: price })];
+  var qty = parseInt(m[1], 10);
+  if (!qty || qty < 2) return [Object.assign({ claimedBy: null }, item || {}, { name: name, price: price })];
+  var rest = m[2];
+  var perUnit = price / qty;
+  var pm = rest.match(/\s*\(([\d.]+)\)\s*$/);
+  if (pm) {
+    var paren = parseFloat(pm[1]);
+    if (!isNaN(paren) && paren > 0 && Math.abs(paren * qty - price) < 0.05) {
+      perUnit = paren;
+    }
+    rest = rest.replace(/\s*\(([\d.]+)\)\s*$/, '').trim();
+  }
+  var cleanName = rest;
+  var gid = 'g-' + cleanName.replace(/\s+/g, '-').toLowerCase().replace(/[^a-z0-9-]/g, '') + '-' + perUnit.toFixed(2);
+  var out = [];
+  for (var i = 0; i < qty; i++) {
+    out.push({
+      name: cleanName,
+      price: round2(perUnit),
+      claimedBy: null,
+      groupId: gid,
+      groupSize: qty,
+      groupIndex: i,
+    });
+  }
+  return out;
+}
+
+// Apply both name-leading-integer expansion and any legacy item.qty>1 fan-out.
+function processScannedItem(item) {
+  var fromName = expandGroupedItem(item);
+  if (fromName.length > 1) return fromName;
+  var qty = (item && item.qty) || 1;
+  if (qty > 1) {
+    var perUnit = parseFloat(item.price) || 0;
+    var cleanName = String(item.name || '').trim();
+    var gid = 'g-' + cleanName.replace(/\s+/g, '-').toLowerCase().replace(/[^a-z0-9-]/g, '') + '-' + perUnit.toFixed(2);
+    var grouped = [];
+    for (var i = 0; i < qty; i++) {
+      grouped.push({
+        name: cleanName, price: round2(perUnit), claimedBy: null,
+        groupId: gid, groupSize: qty, groupIndex: i,
+      });
+    }
+    return grouped;
+  }
+  return [{ name: String((item && item.name) || '').trim(), price: parseFloat(item && item.price) || 0, claimedBy: null }];
+}
+
+// Build a render-time list of either single-item slots or group buckets
+// keyed by groupId, with the original menuItems indices preserved.
+function groupMenuItemsByGroupId(items) {
+  var slots = [];
+  var byId = {};
+  (items || []).forEach(function(item, idx) {
+    if (item && item.groupId) {
+      if (!byId[item.groupId]) {
+        var g = {
+          isGroup: true, groupId: item.groupId,
+          name: item.name, perUnit: parseFloat(item.price) || 0,
+          items: [], indices: [],
+        };
+        byId[item.groupId] = g;
+        slots.push(g);
+      }
+      byId[item.groupId].items.push(item);
+      byId[item.groupId].indices.push(idx);
+    } else {
+      slots.push({ isGroup: false, item: item, index: idx });
+    }
+  });
+  return slots;
+}
+
+function toggleHostGroup(gid) {
+  expandedGroups[gid] = !expandedGroups[gid];
+  renderHostClaim();
+}
+
 function scanReceipt() {
   var inp = document.getElementById('receipt-img');
   var file = inp && inp.files[0];
@@ -1832,14 +1997,12 @@ function scanReceipt() {
         return;
       }
       var d = res.data;
-      // Items: preserve qty-expand into separate claimable rows
+      // Items: expand "N Item (price)" style entries AND legacy qty>1 into
+      // individually claimable rows, with shared groupId for the host view.
       if (Array.isArray(d.items) && d.items.length > 0) {
         var expanded = [];
         d.items.forEach(function(item) {
-          var qty = item.qty || 1;
-          for (var i = 0; i < qty; i++) {
-            expanded.push({ name: item.name, price: parseFloat(item.price) || 0, claimedBy: null });
-          }
+          processScannedItem(item).forEach(function(p) { expanded.push(p); });
         });
         menuItems = expanded;
       }
@@ -2816,6 +2979,11 @@ function setEaterStage(stage) {
   var animate = !eaterFirstRender;
   eaterFirstRender = false;
   eaterStage = stage;
+  // Stop the waiting-stage safety-net poll the moment we leave waiting
+  if (stage !== 'waiting' && eaterPollTimer) {
+    clearInterval(eaterPollTimer);
+    eaterPollTimer = null;
+  }
   renderEaterStage(animate);
 }
 
@@ -2841,8 +3009,8 @@ function renderEaterStage(animate) {
       sublineHTML = 'Drop your name, then tap your picks.';
     }
   } else if (eaterStage === 'waiting') {
-    headlineHTML = 'One sec…';
-    sublineHTML = escapeHtml(hostFirst) + '’s doing the math 🧮';
+    headlineHTML = 'Picks locked in 🔒';
+    sublineHTML = 'Now waiting on ' + escapeHtml(hostFirst) + ' to settle up. We’ll buzz you when it’s ready.';
   } else {
     headlineHTML = 'All set 🎉';
     sublineHTML = 'Here’s your share. Pick how you wanna pay 👇';
@@ -2947,7 +3115,9 @@ function renderEaterClaimingBody() {
           '<div class="tab-emoji-chip">'+emojiForItem(item.name)+'</div>' +
           '<div style="flex:1;min-width:0;">' +
             '<div style="font-size:14.5px;font-weight:600;letter-spacing:-0.2px;color:'+T.ink+';overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' +
-              escapeHtml(item.name) + '</div>' +
+              escapeHtml(item.name) +
+              (item.groupId ? ' <span style="color:'+T.inkDim+';font-weight:500;font-size:12px;">('+((item.groupIndex||0)+1)+'/'+(item.groupSize||1)+')</span>' : '') +
+            '</div>' +
             (isOther
               ? '<div style="display:flex;align-items:center;gap:7px;margin-top:5px;">' +
                   avatarStackHTML([claimer], { size: 18 }) +
@@ -3127,11 +3297,7 @@ function renderEaterWaitingBody() {
       '</svg>' +
       '<div style="font-size:84px;line-height:1;animation:tabBob 2.4s ease-in-out infinite;">'+emoji+'</div>' +
     '</div>' +
-    '<div style="margin-top:28px;font-size:18px;font-weight:600;color:'+T.ink+';letter-spacing:-0.3px;">Picks locked in.</div>' +
-    '<div style="margin-top:6px;font-size:14px;color:'+T.inkSoft+';font-weight:500;max-width:280px;line-height:1.4;">' +
-      'Hang tight while ' + escapeHtml(hostFirst) + ' finalizes the tab. We’ll buzz you the moment it’s ready.' +
-    '</div>' +
-    '<div class="tab-card" style="margin-top:22px;width:100%;max-width:320px;display:flex;justify-content:space-between;align-items:center;padding:16px 18px;">' +
+    '<div class="tab-card" style="margin-top:28px;width:100%;max-width:320px;display:flex;justify-content:space-between;align-items:center;padding:16px 18px;">' +
       '<div style="text-align:left;">' +
         '<div style="font-size:10.5px;letter-spacing:1.2px;text-transform:uppercase;color:'+T.inkDim+';font-weight:700;">Your picks</div>' +
         '<div style="font-size:14px;font-weight:600;margin-top:4px;color:'+T.ink+';">' +
@@ -3141,11 +3307,13 @@ function renderEaterWaitingBody() {
         '</div>' +
       '</div>' +
       '<div style="text-align:right;">' +
-        '<div style="font-size:10.5px;letter-spacing:1.2px;text-transform:uppercase;color:'+T.inkDim+';font-weight:700;">Estimate</div>' +
+        '<div style="font-size:10.5px;letter-spacing:1.2px;text-transform:uppercase;color:'+T.inkDim+';font-weight:700;">Running</div>' +
         '<div style="margin-top:4px;">' + moneyHTML(est) + '</div>' +
       '</div>' +
     '</div>' +
-    '<button class="tab-ghost-btn" style="margin-top:14px;" onclick="editEaterOrder()">Edit my picks</button>';
+    '<button class="tab-outline-btn" style="margin-top:14px;width:auto;padding:11px 22px;display:inline-flex;align-items:center;gap:8px;" onclick="editEaterOrder()">' +
+      '<span style="font-size:13px;">✎</span> Edit my picks' +
+    '</button>';
   html += '</div>';
   return html;
 }
@@ -3154,6 +3322,7 @@ function setupEaterRealtime() {
   removeChannelSafe(eaterChannel);
   var name = eaterCtx.name;
   if (!name) return;
+  eaterSubscribeTs = Date.now();
   eaterChannel = supabase
     .channel('eater-' + sessionId + '-' + name)
     .on('postgres_changes', {
@@ -3162,6 +3331,7 @@ function setupEaterRealtime() {
     }, async function(payload) {
       if (payload && payload.new && payload.new.eater_name === name && payload.new.final_owes != null) {
         await removeChannelSafe(eaterChannel); eaterChannel = null;
+        if (eaterPollTimer) { clearInterval(eaterPollTimer); eaterPollTimer = null; }
         var order = await fetchEaterOrder(name);
         if (order) {
           orders = await fetchOrdersForDinner(sessionId);
@@ -3171,6 +3341,24 @@ function setupEaterRealtime() {
       }
     })
     .subscribe();
+  // Belt-and-suspenders: if realtime drops silently, poll every 10s after
+  // the first 5 minutes of waiting. Stops as soon as we advance off waiting.
+  if (eaterPollTimer) { clearInterval(eaterPollTimer); eaterPollTimer = null; }
+  eaterPollTimer = setInterval(function() {
+    if (eaterStage !== 'waiting') {
+      clearInterval(eaterPollTimer); eaterPollTimer = null;
+      return;
+    }
+    if (!eaterSubscribeTs || Date.now() - eaterSubscribeTs < 5 * 60 * 1000) return;
+    fetchEaterOrder(name).then(function(order) {
+      if (order && order.finalOwes != null) {
+        clearInterval(eaterPollTimer); eaterPollTimer = null;
+        removeChannelSafe(eaterChannel); eaterChannel = null;
+        eaterCtx.order = order;
+        setEaterStage('settled');
+      }
+    }).catch(function() {});
+  }, 10000);
 }
 
 function renderEaterSettledBody() {
@@ -3333,7 +3521,7 @@ Object.assign(window, {
   showDeleteTabConfirm, dismissDeleteTab, confirmDeleteTab,
   // Host dinner navigation
   setHostSheet, renderHostClaim, copyEaterLink, copyEaterLinkFromShare, shareEaterLink, clearOrders, toggleHostItemClaim,
-  navigateToStep,
+  toggleHostGroup, navigateToStep,
   // Scan sheet
   scanReceipt, updateMenuItemName, updateMenuItemPrice, removeMenuItemByIdx, addMenuItem,
   setTipMode, setReceiptTip, updateTipFromPct, updateReceiptField,
