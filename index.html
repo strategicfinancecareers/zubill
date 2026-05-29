@@ -7,7 +7,10 @@
 <title>Zubill — Open a tab</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300..700;1,9..144,300..700&family=Outfit:wght@300;400;500;600;700;800&display=swap">
+<!-- Outfit (body) — swap, with a preconnect above to cut the FOUT short -->
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&display=swap">
+<!-- Fraunces (italic accent only) — optional, so it never causes a layout shift; falls back to system serif if not loaded fast -->
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300..700;1,9..144,300..700&display=optional">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 <style>
 * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -19,6 +22,10 @@ body {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   overflow-x: hidden;
+  /* Outfit's x-height ratio; with the system fallback we get near-identical metrics → no jump when Outfit lands */
+  font-size-adjust: 0.514;
+  /* Sticky 60-ish-px progress bar means anchor scrolls need padding so content doesn't tuck under it */
+  scroll-padding-top: 60px;
 }
 button { font: inherit; cursor: pointer; }
 input, select, textarea { font: inherit; color: inherit; }
@@ -498,14 +505,14 @@ function tickerHTML() {
   var pickedCount = participants.filter(function(p){ return p.has_picked; }).length;
   if (joinedCount === 0) {
     return '<div style="background:'+T.paper+';border-radius:18px;padding:14px 16px;border:1px solid '+T.rule+
-      ';display:flex;align-items:center;gap:12px;color:'+T.inkSoft+';font-size:13.5px;font-weight:500;">' +
+      ';min-height:54px;box-sizing:border-box;display:flex;align-items:center;gap:12px;color:'+T.inkSoft+';font-size:13.5px;font-weight:500;">' +
       '<span style="font-size:20px;">👥</span>' +
       '<span>Nobody’s joined yet — share the link 📎</span>' +
     '</div>';
   }
   var lines = tickerLines();
   var hasTicker = lines.length > 0;
-  return '<div id="tab-ticker" style="background:'+T.paper+';border-radius:18px;padding:12px 14px;border:1px solid '+T.rule+';">' +
+  return '<div id="tab-ticker" style="background:'+T.paper+';border-radius:18px;padding:12px 14px;border:1px solid '+T.rule+';min-height:54px;box-sizing:border-box;">' +
     '<div style="display:flex;align-items:center;gap:10px;">' +
       participantsStackHTML(participants, { size: 24, max: 5, ring: T.paper }) +
       '<div style="font-size:13.5px;font-weight:600;color:'+T.ink+';flex:1;min-width:0;line-height:1.25;">' +
@@ -745,6 +752,9 @@ function refreshMatchBanner() {
   var tip = parseFloat(receiptData.tip) || 0;
   var customs = (receiptData.fees || []).reduce(function(s,f){ return s + (parseFloat(f.amount)||0); }, 0);
   var ourSum = sub + tax + service + tip + customs;
+  // Live-refresh the derived "Subtotal with tax" line
+  var swt = document.getElementById('subtotal-with-tax');
+  if (swt) swt.innerHTML = moneyHTML(sub + tax, { color: T.inkSoft });
   var ourSumEl = document.getElementById('our-sum-display');
   if (ourSumEl) ourSumEl.innerHTML = moneyHTML(ourSum);
   var bannerEl = document.getElementById('receipt-match-banner');
@@ -793,6 +803,7 @@ if (mode === 'eater' && sessionId) {
 
 // ── Sign-in screen ───────────────────────────────────────────────────────
 function renderSignInScreen() {
+  scrollTopReset();
   document.getElementById('app').innerHTML =
     '<div class="tab-app tab-fade-in" style="padding-bottom:0;min-height:100vh;display:flex;flex-direction:column;">' +
       '<div style="position:relative;background:'+HERO_GRAD+';color:#FFF6EC;padding:96px 28px 80px;' +
@@ -824,7 +835,6 @@ function renderSignInScreen() {
         '</div>' +
       '</div>' +
     '</div>';
-  scrollTopReset();
 }
 async function signInWithGoogle() {
   var redirectTo = window.location.origin + window.location.pathname;
@@ -881,6 +891,7 @@ async function refreshDashboard() {
 }
 
 function renderTabHome(dinners) {
+  scrollTopReset();
   var live = liveDinnerFromList(dinners);
   var past = dinners.filter(function(d) { return !live || d.id !== live.id; });
   var greeting = userFirstName(currentUser);
@@ -1040,11 +1051,11 @@ function renderTabHome(dinners) {
     '</div>';
 
   document.getElementById('app').innerHTML = html;
-  scrollTopReset();
 }
 
 // ── New dinner form ──────────────────────────────────────────────────────
 function showNewDinnerForm() {
+  scrollTopReset();
   document.getElementById('app').innerHTML =
     '<div class="tab-app tab-fade-in" style="padding:18px 22px 140px;">' +
       '<div style="display:flex;align-items:center;gap:10px;margin-bottom:18px;">' +
@@ -1083,7 +1094,6 @@ function showNewDinnerForm() {
         'Open the tab →' +
       '</button>' +
     '</div>';
-  scrollTopReset();
 }
 function payOptHTML(method) {
   var id = 'pay-' + method.replace(/\s+/g,'');
@@ -1307,6 +1317,7 @@ function renderHostClaim() {
   if (!currentDinner) return;
   hostSheet = null;
   stopTicker();
+  scrollTopReset();
   var d = currentDinner;
   var v = vibeForDinner(d);
   var menuExists = (menuItems || []).length > 0;
@@ -1435,12 +1446,19 @@ function renderHostClaim() {
       progressBarHTML('settle') + headerHTML + tickerSection + progressSection + bodyHTML + runningTallyHTML() + stickyHTML +
     '</div>';
 
-  scrollTopReset();
   startTicker();
 }
 
 function runningTallyHTML() {
-  if (orders.length === 0) return '';
+  if (orders.length === 0) {
+    // Reserve space so the first order doesn't shove the sticky bar down a frame
+    return '<div style="padding:14px 16px 0;">' +
+      '<div class="tab-card" style="padding:16px 18px;min-height:80px;display:flex;flex-direction:column;justify-content:center;gap:6px;">' +
+        '<div style="font-size:11px;font-weight:700;letter-spacing:0.6px;text-transform:uppercase;color:'+T.inkSoft+';">Running tally</div>' +
+        '<div style="font-size:12.5px;color:'+T.inkDim+';font-weight:500;line-height:1.4;">Per-person subtotals will land here as folks pick. Tax & tip distribute on Settle.</div>' +
+      '</div>' +
+    '</div>';
+  }
   var rows = orders.map(function(o) {
     var nItems = (o.items || []).length;
     return '<div style="display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid '+T.ruleSoft+';">' +
@@ -1542,6 +1560,7 @@ function renderHostScanSheet() {
   if (!currentDinner) return;
   hostSheet = 'scan';
   stopTicker();
+  scrollTopReset(); // PART 3: reset BEFORE innerHTML so the new screen mounts at 0
   // Auto-derive food subtotal from items
   var derivedSub = (menuItems || []).reduce(function(s, m){ return s + (parseFloat(m.price)||0); }, 0);
   receiptData.subtotal = round2(derivedSub);
@@ -1555,18 +1574,20 @@ function renderHostScanSheet() {
     back: 'showHostDashboard()',
   });
 
-  // 1) Photo card
+  // 1) Photo
   html += photoCardHTML(hasScanned);
-  // 2) Food zone (collapsed by default — host review only; eaters still see full itemized list)
+  // A) Scanner warnings — only when the Worker flagged something
+  html += scanWarningsBannerHTML();
+  // B) Food (collapsed by default — host review only; eaters still see full list)
   html += foodZoneHTML(derivedSub);
-  // 3) Charges zone (Tax + Service fee, each with a reclassify control)
-  html += chargesZoneHTML();
-  // 4) Tip + custom add-ons
-  html += tipAndAddonsZoneHTML();
-  // 5) Receipt printed total + reconciliation banner
+  // C–F) Tax · Subtotal with tax (derived) · Automatic gratuity · Additional tip
+  html += chargesAndTotalsHTML();
+  // G) Custom fees / extras (corkage, cake, delivery, …)
+  html += feesZoneHTML();
+  // H + I) Receipt printed total + live reconciliation banner
   html += printedTotalAndReconHTML();
 
-  // Confirm
+  // J) Confirm
   html +=
     '<div style="padding:0 22px 14px;">' +
       '<button class="tab-grad-btn" style="width:100%;justify-content:center;padding:16px;" onclick="confirmReceiptTotals()">Confirm & open the tab →</button>' +
@@ -1579,7 +1600,6 @@ function renderHostScanSheet() {
   html += '</div>';
 
   document.getElementById('app').innerHTML = html;
-  scrollTopReset();
   (receiptData.fees || []).forEach(function(_, idx) { renderFeeRow(idx); });
 }
 
@@ -1654,51 +1674,68 @@ function foodZoneHTML(sub) {
   return html;
 }
 
-function chargesZoneHTML() {
+// Warning banner from the Worker's data.warnings[] — appears above food
+function scanWarningsBannerHTML() {
+  var ws = (receiptData && receiptData.scanWarnings) || [];
+  if (!ws.length) return '';
   return '<div style="padding:0 22px 14px;">' +
-    '<div class="tab-card">' +
-      '<div style="font-size:11px;font-weight:700;letter-spacing:0.6px;text-transform:uppercase;color:'+T.inkSoft+';margin-bottom:6px;">Charges on the receipt</div>' +
-      '<div style="font-size:11.5px;color:'+T.inkSoft+';margin-bottom:14px;font-weight:500;line-height:1.4;">Re-label any line if the scanner guessed wrong.</div>' +
-      chargeRowHTML('Tax', 'tax') +
-      chargeRowHTML('Service fee', 'service') +
+    '<div style="background:rgba(242,184,84,0.20);border:1.5px solid rgba(242,184,84,0.45);border-radius:14px;padding:14px 16px;color:#854f0b;">' +
+      '<div style="font-size:13.5px;font-weight:700;margin-bottom:8px;line-height:1.3;">⚠️ The scanner flagged something:</div>' +
+      '<ul style="margin:0;padding-left:18px;font-size:12.5px;font-weight:500;line-height:1.5;">' +
+        ws.map(function(w){ return '<li>'+escapeHtml(String(w))+'</li>'; }).join('') +
+      '</ul>' +
     '</div>' +
   '</div>';
 }
 
-function chargeRowHTML(label, kind) {
-  var value = kind === 'tax' ? (receiptData.tax || 0) : (receiptData.serviceFee || 0);
-  var inputId = kind === 'tax' ? 'r-tax' : 'r-service';
-  var pickerOpts =
-    '<option value="'+kind+'" selected>Keep as ' + escapeHtml(label.toLowerCase()) + '</option>' +
-    (kind !== 'tax'     ? '<option value="tax">Re-label as tax</option>'         : '') +
-    (kind !== 'service' ? '<option value="service">Re-label as service fee</option>' : '') +
-    '<option value="tip">Re-label as tip</option>';
+// Tax · Subtotal with tax (derived, read-only) · Auto gratuity · Additional tip
+function chargesAndTotalsHTML() {
+  var sub = (menuItems || []).reduce(function(s, m){ return s + (parseFloat(m.price)||0); }, 0);
+  var tax = parseFloat(receiptData.tax) || 0;
+  return '<div style="padding:0 22px 14px;">' +
+    '<div class="tab-card">' +
+      amountRowHTML('Tax', null, 'r-tax', tax) +
+      derivedRowHTML('Subtotal with tax', sub + tax, 'subtotal-with-tax') +
+      amountRowHTML(
+        'Automatic gratuity',
+        'Service charge added by the restaurant — often 18–20% for groups of 6+.',
+        'r-service',
+        receiptData.serviceFee || 0
+      ) +
+      amountRowHTML(
+        'Additional tip',
+        'Tip you’re adding on top of the service fee.',
+        'r-tip',
+        receiptData.tip || 0
+      ) +
+    '</div>' +
+  '</div>';
+}
+
+function amountRowHTML(label, sub, id, value) {
   return '<div style="display:flex;align-items:center;gap:10px;padding:11px 0;border-bottom:1px solid '+T.ruleSoft+';">' +
     '<div style="flex:1;min-width:0;">' +
       '<div style="font-size:14.5px;font-weight:600;color:'+T.ink+';">'+escapeHtml(label)+'</div>' +
-      '<div style="margin-top:3px;">' +
-        '<select onchange="reclassifyCharge(\''+kind+'\', this.value)" style="font-size:11px;color:'+T.inkDim+';background:transparent;border:none;cursor:pointer;font-weight:500;padding:0;">' +
-          pickerOpts +
-        '</select>' +
-      '</div>' +
+      (sub ? '<div style="font-size:11px;color:'+T.inkDim+';margin-top:2px;font-weight:500;line-height:1.35;">'+escapeHtml(sub)+'</div>' : '') +
     '</div>' +
-    moneyInputHTML(inputId, value) +
+    moneyInputHTML(id, value) +
   '</div>';
 }
 
-function tipAndAddonsZoneHTML() {
+function derivedRowHTML(label, value, id) {
+  return '<div style="display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px dashed '+T.ruleSoft+';background:'+T.paper+';margin:0 -10px;padding-left:14px;padding-right:14px;border-radius:10px;">' +
+    '<div style="flex:1;min-width:0;font-size:12.5px;font-weight:700;letter-spacing:0.3px;text-transform:uppercase;color:'+T.inkSoft+';">' + escapeHtml(label) + '</div>' +
+    '<div id="'+id+'" style="color:'+T.inkSoft+';font-weight:700;">'+moneyHTML(value, { color: T.inkSoft })+'</div>' +
+  '</div>';
+}
+
+function feesZoneHTML() {
   return '<div style="padding:0 22px 14px;">' +
     '<div class="tab-card">' +
-      '<div style="font-size:11px;font-weight:700;letter-spacing:0.6px;text-transform:uppercase;color:'+T.inkSoft+';margin-bottom:14px;">Tip &amp; add-ons</div>' +
-      '<div style="display:flex;align-items:center;gap:10px;padding:11px 0;border-bottom:1px solid '+T.ruleSoft+';">' +
-        '<div style="flex:1;min-width:0;">' +
-          '<div style="font-size:14.5px;font-weight:600;color:'+T.ink+';">Tip</div>' +
-          '<div style="font-size:11px;color:'+T.inkDim+';margin-top:2px;font-weight:500;">Extra tip on top of any service fee.</div>' +
-        '</div>' +
-        moneyInputHTML('r-tip', receiptData.tip || 0) +
-      '</div>' +
-      '<div id="fees-list" style="margin-top:8px;"></div>' +
-      '<button onclick="addFee()" class="tab-outline-btn" style="width:100%;margin-top:10px;">+ Add custom charge</button>' +
+      '<div style="font-size:11px;font-weight:700;letter-spacing:0.6px;text-transform:uppercase;color:'+T.inkSoft+';margin-bottom:6px;">Other fees</div>' +
+      '<div style="font-size:11.5px;color:'+T.inkSoft+';margin-bottom:14px;font-weight:500;line-height:1.4;">Corkage, cake, delivery — anything not already on the receipt above. Scanner-detected fees show up here too.</div>' +
+      '<div id="fees-list"></div>' +
+      '<button onclick="addFee()" class="tab-outline-btn" style="width:100%;margin-top:8px;">+ Add custom charge</button>' +
     '</div>' +
   '</div>';
 }
@@ -1748,24 +1785,6 @@ function focusField(id) {
   if (el) { el.focus(); el.select && el.select(); }
 }
 
-function reclassifyCharge(currentKind, newKind) {
-  if (!newKind || currentKind === newKind) return;
-  var v = parseFloat(
-    currentKind === 'tax' ? receiptData.tax :
-    currentKind === 'service' ? receiptData.serviceFee :
-    receiptData.tip
-  ) || 0;
-  // Zero the source slot
-  if (currentKind === 'tax')     receiptData.tax        = 0;
-  else if (currentKind === 'service') receiptData.serviceFee = 0;
-  else if (currentKind === 'tip') receiptData.tip       = 0;
-  // Add to destination slot
-  if (newKind === 'tax')     receiptData.tax        = (parseFloat(receiptData.tax)        || 0) + v;
-  else if (newKind === 'service') receiptData.serviceFee = (parseFloat(receiptData.serviceFee) || 0) + v;
-  else if (newKind === 'tip') receiptData.tip       = (parseFloat(receiptData.tip)        || 0) + v;
-  renderHostScanSheet();
-}
-
 function setFeeProportional(idx, proportional) {
   if (!receiptData.fees || !receiptData.fees[idx]) return;
   receiptData.fees[idx].proportional = !!proportional;
@@ -1801,37 +1820,22 @@ function scanReceipt() {
     canvas.getContext('2d').drawImage(img, 0, 0, w, h);
     var base64 = canvas.toDataURL('image/jpeg', 0.7).split(',')[1];
 
-    var totalsCall = fetch('https://zubillscanner.zuhayr-daya.workers.dev', {
+    // SINGLE structured-mode call. Worker returns items, food_subtotal, tax,
+    // automatic_gratuity, additional_tip, fees[], grand_total, warnings[].
+    fetch('https://zubillscanner.zuhayr-daya.workers.dev', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ image: base64, mediaType: 'image/jpeg', mode: 'totals' }),
-    }).then(function(r) { return r.json(); });
-
-    var itemsCall = fetch('https://zubillscanner.zuhayr-daya.workers.dev', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ image: base64, mediaType: 'image/jpeg', mode: 'items' }),
-    }).then(function(r) { return r.json(); });
-
-    Promise.all([totalsCall, itemsCall]).then(function(results) {
-      var totalsRes = results[0];
-      var itemsRes  = results[1];
-
-      if (totalsRes && totalsRes.success && totalsRes.data) {
-        var d = totalsRes.data;
-        if (d.subtotal != null) receiptData.subtotal     = parseFloat(d.subtotal);
-        if (d.tax      != null) receiptData.tax          = parseFloat(d.tax);
-        if (d.tip      != null) receiptData.tip          = parseFloat(d.tip);
-        if (d.total    != null) receiptData.receiptTotal = parseFloat(d.total);
-        // Best-effort: try a few common keys the Worker MIGHT return for an
-        // auto-gratuity / service charge. If none present, host re-labels in UI.
-        var svcKey = ['service', 'service_fee', 'serviceFee', 'gratuity', 'auto_gratuity', 'autograt'].find(function(k) {
-          return d[k] != null && !isNaN(parseFloat(d[k]));
-        });
-        if (svcKey) receiptData.serviceFee = parseFloat(d[svcKey]);
+      body: JSON.stringify({ image: base64, mediaType: 'image/jpeg', mode: 'full' }),
+    }).then(function(r) { return r.json(); }).then(function(res) {
+      if (!res || !res.success || !res.data) {
+        var st = document.getElementById('scan-status');
+        if (st) st.innerHTML = '<span style="color:'+T.tomato+';">Scan failed — try a clearer photo.</span>';
+        return;
       }
-
-      if (itemsRes && itemsRes.success && itemsRes.data && itemsRes.data.length > 0) {
+      var d = res.data;
+      // Items: preserve qty-expand into separate claimable rows
+      if (Array.isArray(d.items) && d.items.length > 0) {
         var expanded = [];
-        itemsRes.data.forEach(function(item) {
+        d.items.forEach(function(item) {
           var qty = item.qty || 1;
           for (var i = 0; i < qty; i++) {
             expanded.push({ name: item.name, price: parseFloat(item.price) || 0, claimedBy: null });
@@ -1839,6 +1843,26 @@ function scanReceipt() {
         });
         menuItems = expanded;
       }
+      // Top-level numeric fields → existing receiptData slots
+      if (d.food_subtotal     != null) receiptData.subtotal     = parseFloat(d.food_subtotal);
+      if (d.tax               != null) receiptData.tax          = parseFloat(d.tax);
+      if (d.automatic_gratuity!= null) receiptData.serviceFee   = parseFloat(d.automatic_gratuity);
+      if (d.additional_tip    != null) receiptData.tip          = parseFloat(d.additional_tip);
+      if (d.grand_total       != null) receiptData.receiptTotal = parseFloat(d.grand_total);
+      // Scanner-detected fees: replace any prior scanner-origin fees, preserve host-added ones
+      receiptData.fees = (receiptData.fees || []).filter(function(f){ return !f.scannerOrigin; });
+      if (Array.isArray(d.fees)) {
+        d.fees.forEach(function(f) {
+          receiptData.fees.push({
+            name: f.name || 'Fee',
+            amount: parseFloat(f.amount) || 0,
+            proportional: false,
+            scannerOrigin: true,
+          });
+        });
+      }
+      // Warnings for the new banner
+      receiptData.scanWarnings = Array.isArray(d.warnings) ? d.warnings.slice() : [];
       renderHostScanSheet();
     }).catch(function(e) {
       var st = document.getElementById('scan-status');
@@ -1950,6 +1974,7 @@ function renderHostShareScreen() {
   if (!currentDinner) return;
   hostSheet = 'share';
   stopTicker();
+  scrollTopReset();
   var eaterUrl = window.location.origin + window.location.pathname + '?mode=eater&session=' + sessionId;
   var html = '<div class="tab-app tab-fade-in" style="padding-bottom:48px;">';
   html += progressBarHTML('share');
@@ -1964,8 +1989,8 @@ function renderHostShareScreen() {
       '<div style="margin-top:10px;font-size:14.5px;color:'+T.inkSoft+';font-weight:500;line-height:1.4;">Share it with the table 👇</div>' +
     '</div>' +
     '<div style="padding:18px 22px 20px;display:flex;justify-content:center;">' +
-      '<div style="background:'+T.cream+';border:2px solid '+T.paper+';border-radius:28px;padding:22px;box-shadow:0 24px 48px -20px rgba(42,22,16,0.20), 0 8px 16px -8px rgba(42,22,16,0.10);">' +
-        '<div id="qr-host" style="display:flex;align-items:center;justify-content:center;width:220px;height:220px;"></div>' +
+      '<div style="background:'+T.cream+';border:2px solid '+T.paper+';border-radius:28px;padding:22px;width:264px;height:264px;box-sizing:border-box;flex-shrink:0;box-shadow:0 24px 48px -20px rgba(42,22,16,0.20), 0 8px 16px -8px rgba(42,22,16,0.10);">' +
+        '<div id="qr-host" style="display:flex;align-items:center;justify-content:center;width:220px;height:220px;box-sizing:border-box;overflow:hidden;"></div>' +
       '</div>' +
     '</div>' +
     '<div style="padding:0 22px;display:flex;flex-direction:column;gap:10px;">' +
@@ -1979,7 +2004,6 @@ function renderHostShareScreen() {
     '<div style="padding:18px 24px 0;text-align:center;font-size:11.5px;color:'+T.inkDim+';font-weight:500;word-break:break-all;">'+escapeHtml(eaterUrl)+'</div>' +
   '</div>';
   document.getElementById('app').innerHTML = html;
-  scrollTopReset();
   // QR render — small async so the node is in the DOM
   setTimeout(function() {
     var qrEl = document.getElementById('qr-host');
@@ -2005,6 +2029,7 @@ function renderHostShareScreen() {
 function renderHostAddEatersSheet() {
   hostSheet = 'add-eaters';
   stopTicker();
+  scrollTopReset();
   var backTarget = (receiptData && receiptData.confirmed) ? 'renderHostClaim()' : 'setHostSheet(\'scan\')';
   var phaseStep = (receiptData && receiptData.confirmed) ? 'settle' : 'scan';
   var html = '<div class="tab-app tab-fade-in">';
@@ -2024,7 +2049,6 @@ function renderHostAddEatersSheet() {
       '</div>' +
     '</div></div>';
   document.getElementById('app').innerHTML = html;
-  scrollTopReset();
   personCount = 0;
   addPersonEntry();
   if (window._dinnerHostName) {
@@ -2145,6 +2169,7 @@ async function saveAllOrders() {
 function renderHostEditOrderSheet() {
   hostSheet = 'edit-order';
   stopTicker();
+  scrollTopReset();
   var ctx = editingOrderCtx || {};
   var order = orders.find(function(o){ return o.name === ctx.name; });
   if (!order) { setHostSheet(null); return; }
@@ -2177,7 +2202,6 @@ function renderHostEditOrderSheet() {
       '</div>' +
     '</div></div>';
   document.getElementById('app').innerHTML = html;
-  scrollTopReset();
 }
 function addEditItem() {
   editItemCount++;
@@ -2223,6 +2247,7 @@ function editOrderInline(name, isHost) {
 function renderHostSettleSheet() {
   hostSheet = 'settle';
   stopTicker();
+  scrollTopReset();
   if (!receiptData || !receiptData.confirmed) {
     document.getElementById('app').innerHTML =
       '<div class="tab-app tab-fade-in">' +
@@ -2230,7 +2255,6 @@ function renderHostSettleSheet() {
         hostHeaderHTML({ title: 'Settle up', titleSerif: false, back: 'renderHostClaim' }) +
         '<div style="padding:0 22px;"><div class="tab-card" style="padding:24px;text-align:center;color:'+T.tomato+';font-weight:500;">Confirm the receipt first.</div></div>' +
       '</div>';
-    scrollTopReset();
     return;
   }
   var feesTotal = (receiptData.fees || []).reduce(function(s,f){ return s+(parseFloat(f.amount)||0); }, 0);
@@ -2362,7 +2386,6 @@ function renderHostSettleSheet() {
 
   html += '</div>';
   document.getElementById('app').innerHTML = html;
-  scrollTopReset();
 }
 function rowHTML(label, val) {
   return '<div style="display:flex;justify-content:space-between;padding:3px 0;"><span>'+label+'</span><span style="font-weight:600;color:'+T.ink+';">'+val+'</span></div>';
@@ -2495,6 +2518,7 @@ function doCalculate(hostAbsorbsUnclaimed) {
 function renderHostMismatchScreen() {
   hostSheet = 'mismatch';
   stopTicker();
+  scrollTopReset();
   var p = pendingCalcData || { gap: 0, foodSubtotal: 0, unclaimedValue: 0 };
   var unclaimed = p.unclaimedValue || Math.abs(p.gap);
   document.getElementById('app').innerHTML =
@@ -2534,7 +2558,6 @@ function renderHostMismatchScreen() {
         '<button class="tab-outline-btn" style="margin-top:8px;" onclick="setHostSheet(\'settle\')">Back to settle</button>' +
       '</div>' +
     '</div>';
-  scrollTopReset();
 }
 
 async function notifyEaters() {
@@ -2575,6 +2598,7 @@ async function notifyEaters() {
 function renderHostPaidSheet() {
   hostSheet = 'paid';
   stopTicker();
+  scrollTopReset();
   var notified = orders.filter(function(o){ return o.finalOwes || o.isHost; });
   var hostResult = lastResults ? lastResults.find(function(r){ return r.isHost; }) : null;
   var html = '<div class="tab-app tab-fade-in">';
@@ -2631,7 +2655,6 @@ function renderHostPaidSheet() {
   }
   html += '</div>';
   document.getElementById('app').innerHTML = html;
-  scrollTopReset();
 }
 function togglePaid(name) {
   paidStatus[name] = !paidStatus[name];
@@ -2722,6 +2745,7 @@ function eaterJoinIfNeeded(name) {
 function renderEaterJoinGate() {
   var d = eaterCtx.dinner;
   if (!d) return;
+  scrollTopReset();
   var v = vibeForDinner(d);
   var hostName = d.hostName || '';
   var hostFirst = hostName ? hostName.split(/\s+/)[0] : '';
@@ -2757,7 +2781,6 @@ function renderEaterJoinGate() {
         '</button>' +
       '</div>' +
     '</div>';
-  scrollTopReset();
   setTimeout(function() {
     var el = document.getElementById('join-name');
     if (el) el.focus();
@@ -2800,6 +2823,7 @@ function renderEaterStage(animate) {
   var d = eaterCtx.dinner;
   if (!d) return;
   if (eaterStage === 'join') { renderEaterJoinGate(); return; }
+  scrollTopReset();
   var v = vibeForDinner(d);
   var hostName = d.hostName || 'your host';
   var hostFirst = (hostName.split(/\s+/)[0]) || 'Zu';
@@ -2877,7 +2901,6 @@ function renderEaterStage(animate) {
     '<div class="' + cls + '" style="padding:0 0 200px;position:relative;">' +
       hero + body + bottomBar +
     '</div>';
-  scrollTopReset();
 
   // Side effects
   if (eaterStage === 'claiming') {
@@ -3317,7 +3340,7 @@ Object.assign(window, {
   addFee, updateFeeEl, removeFee, checkReceiptMatch,
   confirmReceiptTotals, sendMenuToEaters,
   toggleFoodExpanded, expandFoodAndScroll, focusField,
-  reclassifyCharge, setFeeProportional,
+  setFeeProportional,
   // Add-eaters sheet
   addPersonEntry, removePersonEntry, addPersonItem, saveAllOrders,
   // Edit-order sheet
