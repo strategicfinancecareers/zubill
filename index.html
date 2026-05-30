@@ -300,6 +300,40 @@ async function fetchOrdersForDinner(id) {
     return [];
   }
 }
+// Centralised mark_picked caller — uses the 3-arg signature with named params
+// (matches PostgREST's `mark_picked(p_dinner_id, p_name, p_picked_by_host)`),
+// logs the FULL error object on failure, surfaces a non-fatal toast, and
+// refreshes the local participants array on success so the joined/picked
+// counter and pre-settle overlay never read stale state.
+async function markPickedWithLog(name, byHost, opts) {
+  opts = opts || {};
+  var tag = opts.tag || 'mark_picked';
+  var n = String(name || '').trim();
+  if (!n) { console.warn('[' + tag + '] called with empty name — skipping'); return false; }
+  try {
+    var res = await supabase.rpc('mark_picked', {
+      p_dinner_id: sessionId,
+      p_name: n,
+      p_picked_by_host: !!byHost,
+    });
+    if (res && res.error) {
+      console.error('[' + tag + '] error for "' + n + '" byHost=' + !!byHost + ':', res.error);
+      if (!opts.silent) showToast("Couldn't update pick status — refresh if you see issues");
+      return false;
+    }
+    console.log('[' + tag + '] ok for "' + n + '" byHost=' + !!byHost);
+    try {
+      var fresh = await fetchParticipants(sessionId);
+      if (Array.isArray(fresh)) participants = fresh;
+    } catch (e) { console.warn('[' + tag + '] participants refresh failed:', e); }
+    return true;
+  } catch (e) {
+    console.error('[' + tag + '] threw for "' + n + '":', e);
+    if (!opts.silent) showToast("Couldn't update pick status — refresh if you see issues");
+    return false;
+  }
+}
+
 async function fetchParticipants(id) {
   try {
     var res = await supabase
@@ -1078,13 +1112,8 @@ async function pickForSavePicks() {
       p_dinner_id: sessionId, p_eater_name: name, p_indices: indices,
     });
     if (r2 && r2.error) { console.error('[PICK-FOR] claim_menu_items failed:', r2.error); throw r2.error; }
-    // NEW: mark_picked with picked_by_host=true so the UI can flag it later
-    try {
-      var r3 = await supabase.rpc('mark_picked', {
-        p_dinner_id: sessionId, p_name: name, p_picked_by_host: true,
-      });
-      if (r3 && r3.error) console.warn('[PICK-FOR] mark_picked error:', r3.error);
-    } catch (e) { console.warn('[PICK-FOR] mark_picked threw:', e); }
+    // On-behalf pick → byHost=true so the UI can flag it later
+    await markPickedWithLog(name, true, { tag: 'mark_picked PICK-FOR' });
     showToast('Picks saved for ' + name + ' 🤝');
     dismissPickForModal();
     refreshOrders();
@@ -1099,7 +1128,20 @@ async function pickForSavePicks() {
 // Sanity check before the host fires off totals to everyone. Shows three
 // status rows (items / people / math). All ✓ → primary "Send totals" CTA;
 // any ⚠️ → outlined "Send anyway" so the override is deliberate.
-function openPreSettleOverlay() {
+async function openPreSettleOverlay() {
+  // Defensive: refresh participants + orders before we render. Any stale
+  // module state from earlier in the session would otherwise show phantom
+  // "hasn't picked" rows or miss freshly-submitted orders.
+  try {
+    var both = await Promise.all([
+      fetchParticipants(sessionId),
+      fetchOrdersForDinner(sessionId),
+    ]);
+    if (Array.isArray(both[0])) participants = both[0];
+    if (Array.isArray(both[1])) orders = both[1];
+  } catch (e) {
+    console.warn('[PRE-SETTLE] state refresh failed:', e);
+  }
   dismissPreSettleOverlay();
   // Compute status
   var itemsTotal = (menuItems || []).length;
@@ -1664,12 +1706,17 @@ async function showHostDinner() {
   menuItems = currentDinner.menuItems || [];
   // Linear flow: send a fresh dinner straight to scan; confirmed → live claim view
   hostSheet = (receiptData && receiptData.confirmed) ? null : 'scan';
-  // Host is automatically a participant (idempotent, best-effort)
+  // Host is automatically a participant (idempotent ON CONFLICT DO NOTHING).
+  // Without this, the joined/picked counter undercounts and the pre-settle
+  // overlay phantom-flags the host as "hasn't picked" even after they claim.
   if (currentDinner.hostName) {
-    try {
-      supabase.rpc('join_dinner', { p_dinner_id: sessionId, p_name: currentDinner.hostName })
-        .catch(function(e) { console.warn('join_dinner failed:', e); });
-    } catch (e) { /* swallow */ }
+    supabase.rpc('join_dinner', {
+      p_dinner_id: sessionId,
+      p_name: currentDinner.hostName,
+    }).then(function(r) {
+      if (r && r.error) console.error('[HOST JOIN] error:', r.error);
+      else console.log('[HOST JOIN] ok for "' + currentDinner.hostName + '"');
+    }).catch(function(e) { console.error('[HOST JOIN] threw:', e); });
   }
   // Render the current sheet immediately with whatever state we have so the
   // loading placeholder never lingers if realtime/queries are slow.
@@ -2054,8 +2101,9 @@ async function toggleHostItemClaim(idx) {
         p_subtotal: round2(subtotal), p_is_host: true, p_items: items,
       });
       if (r2.error) throw r2.error;
-      // Host has picked
-      supabase.rpc('mark_picked', { p_dinner_id: sessionId, p_name: hostName }).catch(function() {});
+      // Host picked their own items (NOT picked_by_host — that flag is
+      // reserved for the pick-for-someone-else flow).
+      markPickedWithLog(hostName, false, { tag: 'mark_picked HOST' });
     } else {
       await supabase.from('orders').delete().eq('dinner_id', sessionId).eq('eater_name', hostName);
     }
@@ -3937,15 +3985,9 @@ async function submitEaterOrder() {
       console.log('[EATER SUBMIT] claim_menu_items ok');
     }
 
-    // 4) Best-effort: flip participant.has_picked → true. New signature has
-    //    a 3rd arg (picked_by_host) with default false, so the 2-arg call
-    //    still works. Don't block the UI on it.
-    supabase.rpc('mark_picked', { p_dinner_id: sessionId, p_name: name })
-      .then(function(r) {
-        if (r && r.error) console.error('[EATER SUBMIT] mark_picked error:', r.error);
-        else console.log('[EATER SUBMIT] mark_picked ok');
-      })
-      .catch(function(e) { console.error('[EATER SUBMIT] mark_picked threw:', e); });
+    // 4) Best-effort: flip participant.has_picked → true. The eater
+    //    picking their own items is byHost=false. Don't block the UI on it.
+    markPickedWithLog(name, false, { tag: 'mark_picked EATER SUBMIT', silent: true });
 
     // 5) Persist locally so refresh routes to waiting.
     try {
