@@ -807,6 +807,9 @@ function refreshMatchBanner() {
   if (ourSumEl) ourSumEl.innerHTML = moneyHTML(ourSum);
   var bannerEl = document.getElementById('receipt-match-banner');
   if (bannerEl) bannerEl.innerHTML = matchBannerHTML();
+  // Pills + live % equivalent track the same subtotal/tip state, so
+  // re-evaluate them here too — covers $ keystroke AND menu-item edits.
+  refreshTipUI();
 }
 
 function shareEaterLink() {
@@ -2300,13 +2303,16 @@ function photoCardHTML(hasScanned) {
   var hasPreview = hasScanned && !!imgSrc;
   return '<div style="padding:0 22px 14px;">' +
     '<div class="tab-card">' +
-      '<div style="display:flex;align-items:center;gap:14px;margin-bottom:14px;">' +
+      '<div style="display:flex;align-items:center;gap:14px;margin-bottom:10px;">' +
         '<div style="width:48px;height:48px;border-radius:14px;background:'+T.peachSoft+';display:flex;align-items:center;justify-content:center;font-size:24px;flex-shrink:0;">📷</div>' +
         '<div style="flex:1;min-width:0;">' +
           '<div style="font-size:15px;font-weight:700;color:'+T.ink+';letter-spacing:-0.2px;">Snap the receipt</div>' +
           '<div style="font-size:12px;color:'+T.inkSoft+';margin-top:2px;font-weight:500;">AI reads items, tax & total.</div>' +
         '</div>' +
       '</div>' +
+      // Tip-receipt guidance — hosts often scan the pre-tip card receipt
+      // (no tip line) and don't realize the tip slot will be $0.
+      '<div style="font-size:12px;color:'+T.inkSoft+';margin-bottom:12px;font-weight:500;line-height:1.45;padding:9px 11px;background:'+T.peachSoft+';border-radius:10px;">💡 Got the receipt with the tip printed? Best to scan that one. No tip on it? Scan anyway — you’ll add it after.</div>' +
       '<label for="receipt-img" style="display:block;cursor:pointer;padding:14px 16px;background:#FFF8EE;border:1.5px dashed '+T.rule+';border-radius:14px;text-align:center;">' +
         (hasScanned
           ? '<span style="color:'+T.olive+';font-weight:700;font-size:13.5px;">✓ Receipt scanned' + (receiptData._lastFileName ? ' — '+escapeHtml(receiptData._lastFileName) : '') + '</span><br>' +
@@ -2535,14 +2541,85 @@ function chargesAndTotalsHTML() {
         'r-service',
         receiptData.serviceFee || 0
       ) +
-      amountRowHTML(
-        'Additional tip',
-        'Tip you’re adding on top of the service fee.',
-        'r-tip',
-        receiptData.tip || 0
-      ) +
+      tipRowHTML() +
     '</div>' +
   '</div>';
+}
+
+// US convention: tip % is calculated against the PRE-TAX subtotal,
+// not subtotal-with-tax. receiptData.subtotal is the pre-tax base.
+var TIP_PCTS = [15, 18, 20, 22, 25];
+
+function tipPillRowHTML() {
+  var sub = parseFloat(receiptData.subtotal) || 0;
+  var tip = parseFloat(receiptData.tip) || 0;
+  var activePct = (sub > 0 && tip > 0) ? (tip / sub) * 100 : null;
+  var disabled = sub <= 0;
+  var pillsHTML = '';
+  TIP_PCTS.forEach(function(p) {
+    var active = activePct != null && Math.abs(activePct - p) < 0.5;
+    var bg     = active ? T.tomato : '#FFF8EE';
+    var color  = active ? '#fff'    : (disabled ? T.inkDim : T.inkSoft);
+    var border = active ? T.tomato : T.rule;
+    var cursor = disabled ? 'not-allowed' : 'pointer';
+    var click  = disabled ? '' : ' onclick="pickTipPercent('+p+')"';
+    pillsHTML +=
+      '<button type="button"'+click+(disabled?' disabled':'')+
+        ' style="flex:1;min-width:52px;font-size:12.5px;font-weight:700;padding:7px 0;border-radius:999px;'+
+        'border:1.5px solid '+border+';background:'+bg+';color:'+color+';cursor:'+cursor+';opacity:'+(disabled?'0.5':'1')+';">'+
+        p+'%</button>';
+  });
+  return '<div style="display:flex;gap:6px;flex-wrap:nowrap;">'+pillsHTML+'</div>';
+}
+
+function tipPctDisplayHTML() {
+  var sub = parseFloat(receiptData.subtotal) || 0;
+  var tip = parseFloat(receiptData.tip) || 0;
+  if (sub <= 0 || tip <= 0) return '';
+  var pct = (tip / sub) * 100;
+  // Whole-% for the common 10–30% range, 1-decimal for tiny tips
+  var pctStr = pct < 10 ? pct.toFixed(1) : Math.round(pct).toString();
+  return '<div style="font-size:11.5px;color:'+T.inkDim+';font-weight:500;margin-top:6px;text-align:right;">' +
+    '= '+pctStr+'% of $'+sub.toFixed(2)+' subtotal' +
+  '</div>';
+}
+
+function tipRowHTML() {
+  // Visual consistency with Tax + Auto gratuity rows above (label-left,
+  // input-right horizontal row), then pills + pct-display stack below.
+  var tip = parseFloat(receiptData.tip) || 0;
+  return '<div style="padding:11px 0;">' +
+    '<div style="display:flex;align-items:center;gap:10px;">' +
+      '<div style="flex:1;min-width:0;">' +
+        '<div style="font-size:14.5px;font-weight:600;color:'+T.ink+';">Additional tip</div>' +
+        '<div style="font-size:11px;color:'+T.inkDim+';margin-top:2px;font-weight:500;line-height:1.35;">Tip you’re adding on top of the service fee.</div>' +
+      '</div>' +
+      moneyInputHTML('r-tip', tip) +
+    '</div>' +
+    '<div id="tip-pill-container" style="margin-top:10px;">'+tipPillRowHTML()+'</div>' +
+    '<div id="tip-pct-display">'+tipPctDisplayHTML()+'</div>' +
+  '</div>';
+}
+
+// Re-render the pill highlights + pct display in place. Called from
+// refreshMatchBanner so editing the $ input OR a menu item price (which
+// changes subtotal) both re-evaluate which pill is active and what the
+// live % equivalent reads.
+function refreshTipUI() {
+  var pillEl = document.getElementById('tip-pill-container');
+  if (pillEl) pillEl.innerHTML = tipPillRowHTML();
+  var pctEl  = document.getElementById('tip-pct-display');
+  if (pctEl)  pctEl.innerHTML  = tipPctDisplayHTML();
+}
+
+function pickTipPercent(pct) {
+  var sub = parseFloat(receiptData.subtotal) || 0;
+  if (sub <= 0) return; // pills are disabled in this state, but be defensive
+  receiptData.tip = round2(sub * pct / 100);
+  // Mirror into the live input so the user sees the dollar value update
+  var tipInput = document.getElementById('r-tip');
+  if (tipInput) tipInput.value = receiptData.tip.toFixed(2);
+  refreshMatchBanner(); // → saveScanStateDebounced → autosave → refreshTipUI
 }
 
 function amountRowHTML(label, sub, id, value) {
@@ -4597,6 +4674,7 @@ Object.assign(window, {
   // Scan sheet
   scanReceipt, updateMenuItemName, updateMenuItemPrice, removeMenuItemByIdx, addMenuItem,
   setTipMode, setReceiptTip, updateTipFromPct, updateReceiptField,
+  pickTipPercent,
   addFee, updateFeeEl, removeFee, checkReceiptMatch,
   confirmReceiptTotals, sendMenuToEaters,
   toggleFoodExpanded, expandFoodAndScroll, focusField,
