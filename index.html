@@ -1715,6 +1715,16 @@ async function confirmDeleteTab(id) {
     showToast('Delete failed — ' + (res.error.message || 'try again'));
     return;
   }
+  // Best-effort: also drop the receipt image from Storage so we don't
+  // pile up orphans. Non-fatal — the dinner row is already gone, which
+  // is what the user cared about.
+  if (currentUser) {
+    try {
+      await supabase.storage.from('receipts').remove([currentUser.id + '/' + id + '.jpg']);
+    } catch (e) {
+      console.warn('[RECEIPT DELETE] failed (orphan left in storage):', e);
+    }
+  }
   clearScanState(id);
   showToast('Tab deleted');
 }
@@ -1896,10 +1906,17 @@ function renderHostClaim() {
     ? ((receiptData.subtotal||0) + (receiptData.tax||0) + (receiptData.tip||0) + feesTotal)
     : 0;
 
-  var rightHeader =
+  var hasReceiptImage = !!(receiptData && (receiptData._previewImage || receiptData.image_url));
+  var receiptBtn = hasReceiptImage
+    ? '<button class="tab-iconbtn" onclick="openReceiptViewer()" aria-label="View receipt" title="View receipt" style="font-size:14px;">🔍</button>'
+    : '';
+  var shareBtn =
     '<button class="tab-iconbtn" onclick="sharePopupInPlace()" aria-label="Share tab" title="Share tab">' +
       '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="'+T.ink+'" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>' +
     '</button>';
+  var rightHeader = hasReceiptImage
+    ? '<div style="display:flex;gap:8px;">'+receiptBtn+shareBtn+'</div>'
+    : shareBtn;
 
   var headerHTML = hostHeaderHTML({
     title: d.restaurant,
@@ -2273,7 +2290,10 @@ function renderHostScanSheet() {
 }
 
 function photoCardHTML(hasScanned) {
-  var hasPreview = hasScanned && !!receiptData._previewImage;
+  // Prefer the in-memory dataURL for instant render right after scan,
+  // fall back to the Storage URL on refresh / cross-device opens.
+  var imgSrc = (receiptData && (receiptData._previewImage || receiptData.image_url)) || '';
+  var hasPreview = hasScanned && !!imgSrc;
   return '<div style="padding:0 22px 14px;">' +
     '<div class="tab-card">' +
       '<div style="display:flex;align-items:center;gap:14px;margin-bottom:14px;">' +
@@ -2292,7 +2312,7 @@ function photoCardHTML(hasScanned) {
       '<input type="file" id="receipt-img" accept="image/*" onchange="scanReceipt()" style="display:none;" />' +
       (hasPreview
         ? '<div style="display:flex;align-items:center;gap:10px;margin-top:12px;padding:8px 10px;background:#FFF8EE;border-radius:12px;">' +
-            '<img src="'+attr(receiptData._previewImage)+'" alt="Receipt" onclick="openReceiptViewer()" ' +
+            '<img src="'+attr(imgSrc)+'" alt="Receipt" onclick="openReceiptViewer()" ' +
               'style="width:48px;height:48px;object-fit:cover;border-radius:10px;cursor:pointer;flex-shrink:0;border:1px solid '+T.rule+';" />' +
             '<button onclick="openReceiptViewer()" class="tab-ghost-btn" style="padding:0;font-size:12.5px;font-weight:600;color:'+T.inkSoft+';">' +
               '🔍 View receipt' +
@@ -2304,8 +2324,23 @@ function photoCardHTML(hasScanned) {
   '</div>';
 }
 
+// Tiny base64-dataURL → Blob converter for the Storage upload path.
+// We need a Blob (not a dataURL) so supabase.storage.upload sends real
+// binary with the right Content-Type rather than a fat string body.
+function dataURLtoBlob(dataUrl) {
+  var arr = dataUrl.split(',');
+  var mime = (arr[0].match(/:(.*?);/) || [])[1] || 'image/jpeg';
+  var bstr = atob(arr[1]);
+  var n = bstr.length;
+  var u8 = new Uint8Array(n);
+  while (n--) u8[n] = bstr.charCodeAt(n);
+  return new Blob([u8], { type: mime });
+}
+
 // Strip every "_"-prefixed key so client-only fields (preview image,
 // last filename, etc.) never end up in Supabase receipt_data jsonb.
+// image_url is NOT underscore-prefixed and DOES persist — that's the
+// whole point of the Storage migration.
 function stripReceiptInternal(rd) {
   var clean = {};
   Object.keys(rd || {}).forEach(function(k) {
@@ -2387,7 +2422,10 @@ function clearScanState(id) {
 }
 
 function openReceiptViewer() {
-  if (!receiptData || !receiptData._previewImage) {
+  // Prefer the in-memory dataURL (instant, no network), fall back to the
+  // Storage URL so cross-tab / cross-device viewers also see the receipt.
+  var src = receiptData && (receiptData._previewImage || receiptData.image_url);
+  if (!src) {
     showToast('No photo to show — re-scan to view');
     return;
   }
@@ -2402,7 +2440,7 @@ function openReceiptViewer() {
   overlay.innerHTML =
     '<button onclick="dismissReceiptViewer()" aria-label="Close" ' +
       'style="position:absolute;top:16px;right:16px;width:38px;height:38px;border-radius:999px;background:rgba(255,255,255,0.18);border:none;color:#fff;font-size:20px;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:center;line-height:1;">×</button>' +
-    '<img src="'+attr(receiptData._previewImage)+'" alt="Receipt" ' +
+    '<img src="'+attr(src)+'" alt="Receipt" ' +
       'style="max-width:90vw;max-height:90vh;object-fit:contain;border-radius:10px;box-shadow:0 24px 48px -12px rgba(0,0,0,0.45);cursor:default;" ' +
       'onclick="event.stopPropagation();" />';
   document.body.appendChild(overlay);
@@ -2754,7 +2792,7 @@ function scanReceipt() {
 
   var img = new Image();
   var objectUrl = URL.createObjectURL(file);
-  img.onload = function() {
+  img.onload = async function() {
     URL.revokeObjectURL(objectUrl);
     var canvas = document.createElement('canvas');
     var maxSize = 1200;
@@ -2770,6 +2808,29 @@ function scanReceipt() {
     // Keep a viewable copy in module scope. Underscore-prefixed → stripped
     // before any Supabase write by stripReceiptInternal().
     receiptData._previewImage = dataUrl;
+
+    // Durable backing for the image — upload to Supabase Storage so the
+    // receipt survives refresh / cross-device opens. Non-fatal: if it
+    // fails we still have _previewImage for this session and the user
+    // can re-scan later.
+    if (currentUser && sessionId) {
+      try {
+        var blob = dataURLtoBlob(dataUrl);
+        var path = currentUser.id + '/' + sessionId + '.jpg';
+        var upRes = await supabase.storage.from('receipts').upload(path, blob, {
+          contentType: 'image/jpeg', upsert: true,
+        });
+        if (upRes.error) {
+          console.error('[RECEIPT UPLOAD] failed:', upRes.error);
+        } else {
+          var pub = supabase.storage.from('receipts').getPublicUrl(path);
+          // Cache-bust on re-scan so the new image actually shows.
+          receiptData.image_url = pub.data.publicUrl + '?v=' + Date.now();
+        }
+      } catch (e) {
+        console.error('[RECEIPT UPLOAD] threw:', e);
+      }
+    }
 
     // SINGLE structured-mode call. Worker returns items, food_subtotal, tax,
     // automatic_gratuity, additional_tip, fees[], grand_total, warnings[].
