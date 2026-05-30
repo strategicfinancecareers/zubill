@@ -1782,6 +1782,15 @@ function listenOrders() {
     .on('postgres_changes', { event: '*', schema: 'public', table: 'order_items' },                                        function() { refreshOrders(); })
     .on('postgres_changes', { event: '*', schema: 'public', table: 'participants', filter: 'dinner_id=eq.' + sidAtSetup }, function() { refreshOrders(); })
     .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'dinners', filter: 'id=eq.' + sidAtSetup }, function(payload) {
+      // While the host is actively on the scan sheet, ignore dinner-row
+      // UPDATEs. The host's local module state is the source of truth and
+      // a rerender mid-typing would steal focus from whatever input they're
+      // editing. We re-pick up any external changes the moment they leave
+      // the scan sheet (showHostDinner reloads from Supabase on entry).
+      if (hostSheet === 'scan') return;
+      // Also skip if this UPDATE is plausibly our own autosave echo —
+      // helps even on other sheets if we self-write in the future.
+      if (Date.now() < (_suppressDinnerEchoUntil || 0)) return;
       if (payload && payload.new) {
         if (payload.new.menu_items)   menuItems   = payload.new.menu_items;
         if (payload.new.receipt_data) receiptData = payload.new.receipt_data;
@@ -2329,7 +2338,41 @@ function saveScanState() {
 function saveScanStateDebounced() {
   if (_saveScanStateTimer) clearTimeout(_saveScanStateTimer);
   _saveScanStateTimer = setTimeout(saveScanState, 400);
+  // Lockstep durable backing — sessionStorage is the instant local cache,
+  // Supabase is the cross-device / cross-refresh source of truth.
+  autosaveScanDebounced();
 }
+
+// ── Durable autosave: write in-progress scan state to Supabase ───────────
+// sessionStorage dies on tab discard, never crosses devices, and is gone
+// after a hard refresh in incognito. This is the durable backing for that
+// fast local cache. Same 400ms trailing debounce so a burst of edits
+// collapses to one PATCH /dinners?id=eq.<sid>.
+var _autosaveScanTimer = null;
+function autosaveScanToSupabase() {
+  // Re-check at fire time, not just at schedule time — handles the race
+  // where confirmReceiptTotals lands between schedule and fire.
+  if (!sessionId || !currentDinner) return;
+  if (receiptData && receiptData.confirmed) return;
+  var payload = {
+    menu_items: menuItems || [],
+    receipt_data: stripReceiptInternal(receiptData || {}),
+  };
+  // Mark a short window where we treat dinner-row realtime UPDATEs as
+  // self-echoes — see listenOrders.
+  _suppressDinnerEchoUntil = Date.now() + 2000;
+  supabase.from('dinners').update(payload).eq('id', sessionId).then(function(res) {
+    if (res && res.error) console.error('[autosaveScan] failed:', res.error);
+  }, function(e) {
+    console.error('[autosaveScan] threw:', e);
+  });
+}
+function autosaveScanDebounced() {
+  if (_autosaveScanTimer) clearTimeout(_autosaveScanTimer);
+  _autosaveScanTimer = setTimeout(autosaveScanToSupabase, 400);
+}
+var _suppressDinnerEchoUntil = 0;
+
 function loadScanState() {
   if (!sessionId) return null;
   try {
