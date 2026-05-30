@@ -1048,7 +1048,7 @@ function pickForItemsSheetHTML() {
       '</div>' +
       '<div style="display:flex;gap:8px;">' +
         '<button onclick="pickForBackToWho()" class="tab-outline-btn" style="flex:0 0 auto;padding:12px 16px;">‹ Back</button>' +
-        '<button onclick="pickForSavePicks()" class="tab-grad-btn" style="flex:1;justify-content:center;padding:13px;">Save picks for '+escapeHtml(name.split(/\s+/)[0])+'</button>' +
+        '<button id="pick-for-save-btn" onclick="pickForSavePicks()" class="tab-grad-btn" style="flex:1;justify-content:center;padding:13px;">Save picks for '+escapeHtml(name.split(/\s+/)[0])+'</button>' +
       '</div>' +
     '</div>';
   return html;
@@ -1101,6 +1101,11 @@ async function pickForSavePicks() {
     items.push({ name: m.name, price: parseFloat(m.price) || 0 });
     subtotal += parseFloat(m.price) || 0;
   });
+  // Idempotency UX: lock the button while the RPCs run so a slow-network
+  // double-tap can't fire the whole chain twice.
+  var btn = document.getElementById('pick-for-save-btn');
+  var btnLabel = btn ? btn.textContent : '';
+  if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
   try {
     console.log('[PICK-FOR] saving for "' + name + '" — ' + items.length + ' items');
     var r1 = await supabase.rpc('upsert_order_with_items', {
@@ -1121,6 +1126,7 @@ async function pickForSavePicks() {
     console.error('[PICK-FOR] failed:', e);
     var msg = (e && (e.message || e.hint || e.details)) || 'Try again.';
     showToast("Couldn't save — " + msg);
+    if (btn) { btn.disabled = false; btn.textContent = btnLabel || ('Save picks for ' + (name || '').split(/\s+/)[0]); }
   }
 }
 
@@ -1362,7 +1368,7 @@ async function signInWithGoogle() {
     provider: 'google',
     options: { redirectTo: redirectTo },
   });
-  if (res.error) alert('Sign in failed: ' + res.error.message);
+  if (res.error) showToast('Sign in failed — ' + (res.error.message || 'try again'));
 }
 async function signOut() {
   stopTicker();
@@ -1649,7 +1655,11 @@ async function createDinner() {
     host_name: hostName,
     pay_method: selectedPayMethod, pay_handle: handle,
   }).select('id').single();
-  if (res.error) { alert('Error: ' + res.error.message); return; }
+  if (res.error) {
+    console.error('[createDinner] failed:', res.error);
+    showToast("Couldn't open the tab — " + (res.error.message || res.error.hint || 'try again'));
+    return;
+  }
   goToHostDinner(res.data.id);
 }
 function deleteDinner(id) {
@@ -1720,6 +1730,7 @@ function goToHostDinner(id) {
   totalsSent = false;
   pendingCalcData = null;
   editingOrderCtx = null;
+  expandedGroups = {}; // groupId expansion is per-dinner; don't leak across navigations
   scanStateRestored = false; // re-arm the sessionStorage rehydrate for this dinner
   window.history.pushState({}, '', '?mode=host&session=' + id);
   sessionId = id; mode = 'host';
@@ -1763,12 +1774,14 @@ async function showHostDinner() {
 
 function listenOrders() {
   removeChannelSafe(dinnerChannel);
-  dinnerChannel = supabase
-    .channel('dinner-' + sessionId)
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'orders',       filter: 'dinner_id=eq.' + sessionId }, function() { refreshOrders(); })
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'order_items' },                                       function() { refreshOrders(); })
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'participants', filter: 'dinner_id=eq.' + sessionId }, function() { refreshOrders(); })
-    .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'dinners', filter: 'id=eq.' + sessionId }, function(payload) {
+  var sidAtSetup = sessionId;
+  var channelName = 'dinner-' + sidAtSetup;
+  var ch = supabase
+    .channel(channelName)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'orders',       filter: 'dinner_id=eq.' + sidAtSetup }, function() { refreshOrders(); })
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'order_items' },                                        function() { refreshOrders(); })
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'participants', filter: 'dinner_id=eq.' + sidAtSetup }, function() { refreshOrders(); })
+    .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'dinners', filter: 'id=eq.' + sidAtSetup }, function(payload) {
       if (payload && payload.new) {
         if (payload.new.menu_items)   menuItems   = payload.new.menu_items;
         if (payload.new.receipt_data) receiptData = payload.new.receipt_data;
@@ -1779,7 +1792,23 @@ function listenOrders() {
         renderHostSheetForCurrent();
       }
     })
-    .subscribe();
+    .subscribe(function(status, err) {
+      console.log('[realtime] ' + channelName + ' status:', status, err || '');
+      if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
+        if (!ch._retried) {
+          ch._retried = true;
+          setTimeout(function() {
+            // Only retry if we're still on the same dinner; otherwise some other
+            // navigation already swapped the channel and we'd duplicate it.
+            if (sessionId === sidAtSetup && currentDinner) {
+              console.log('[realtime] retrying ' + channelName);
+              listenOrders();
+            }
+          }, 1500);
+        }
+      }
+    });
+  dinnerChannel = ch;
 }
 
 async function refreshOrders() {
@@ -2160,7 +2189,11 @@ function copyEaterLink() {
 async function clearOrders() {
   if (!confirm('Clear every claim on this tab? Cannot be undone.')) return;
   var res = await supabase.from('orders').delete().eq('dinner_id', sessionId);
-  if (res.error) { alert('Error: ' + res.error.message); return; }
+  if (res.error) {
+    console.error('[clearOrders] failed:', res.error);
+    showToast("Couldn't clear claims — " + (res.error.message || res.error.hint || 'try again'));
+    return;
+  }
   // Also clear claimedBy on menu items
   var cleared = (menuItems || []).map(function(m) { var c = Object.assign({}, m); delete c.claimedBy; return c; });
   await supabase.from('dinners').update({ menu_items: cleared }).eq('id', sessionId);
@@ -2222,7 +2255,7 @@ function renderHostScanSheet() {
   // J) Confirm
   html +=
     '<div style="padding:0 22px 14px;">' +
-      '<button class="tab-grad-btn" style="width:100%;justify-content:center;padding:16px;" onclick="confirmReceiptTotals()">Confirm & open the tab →</button>' +
+      '<button id="confirm-receipt-btn" class="tab-grad-btn" style="width:100%;justify-content:center;padding:16px;" onclick="confirmReceiptTotals()">Confirm & open the tab →</button>' +
     '</div>';
   html += '<div style="padding:0 22px 60px;"></div></div>';
 
@@ -2824,6 +2857,10 @@ async function confirmReceiptTotals() {
     var diff = Math.abs(ourSum - printed);
     if (!confirm("It’s off by $" + diff.toFixed(2) + " — split anyway?")) return;
   }
+  // Idempotency UX: lock the button while we write.
+  var btn = document.getElementById('confirm-receipt-btn');
+  var btnLabel = btn ? btn.textContent : '';
+  if (btn) { btn.disabled = true; btn.textContent = 'Opening…'; }
   receiptData.subtotal = round2(sub);
   receiptData.tax = tax;
   receiptData.serviceFee = service;
@@ -2832,7 +2869,13 @@ async function confirmReceiptTotals() {
   var update = { receipt_data: stripReceiptInternal(receiptData), menu_items: menuItems };
   if (menuItems && menuItems.length > 0) update.menu_sent_at = new Date().toISOString();
   var res = await supabase.from('dinners').update(update).eq('id', sessionId);
-  if (res.error) { alert('Error: ' + res.error.message); return; }
+  if (res.error) {
+    console.error('[confirmReceiptTotals] failed:', res.error);
+    var em = res.error.message || res.error.hint || 'try again';
+    showToast("Couldn't open the tab — " + em);
+    if (btn) { btn.disabled = false; btn.textContent = btnLabel || 'Confirm & open the tab →'; }
+    return;
+  }
   clearScanState();
   setHostSheet('share');
 }
@@ -2967,7 +3010,11 @@ async function saveEditOrder(name, isHost) {
     p_dinner_id: sessionId, p_eater_name: name,
     p_subtotal: round2(subtotal), p_is_host: !!isHost, p_items: items,
   });
-  if (res.error) { alert('Error: ' + res.error.message); return; }
+  if (res.error) {
+    console.error('[saveEditOrder] failed:', res.error);
+    showToast("Couldn't save — " + (res.error.message || res.error.hint || 'try again'));
+    return;
+  }
   var st = document.getElementById('edit-save-status');
   if (st) st.textContent = '✓ Saved!';
   setTimeout(function() { setHostSheet(null); }, 500);
@@ -3339,7 +3386,8 @@ async function notifyEaters() {
   } catch (e) {
     console.error('[NOTIFY] failed:', e);
     if (btn) { btn.disabled = false; btn.textContent = 'Send totals to eaters →'; }
-    alert('Error: ' + (e.message || e) + '\n\nTip: when your phone wakes up, the app will retry any missed eaters automatically.');
+    var em = (e && (e.message || e.hint || e.details)) || 'try again';
+    showToast("Couldn't send totals — " + em + ". We'll retry when your phone wakes up.");
   } finally {
     if (wakeLock) {
       try { await wakeLock.release(); console.log('[NOTIFY] wake lock released'); } catch (e) {}
@@ -3475,6 +3523,10 @@ async function showEaterView() {
   await removeChannelSafe(eaterChannel); eaterChannel = null;
   eaterFirstRender = true;
   eaterCtx = {};
+  // Reset the join-cache so a returning eater (or one opening a different
+  // dinner in the same tab) doesn't have their bare name short-circuit
+  // join_dinner against a prior dinner's cached entry.
+  _eaterJoinedNames = {};
   document.getElementById('app').innerHTML =
     '<div class="tab-app tab-fade-in"><div style="padding:80px 24px;text-align:center;color:'+T.inkSoft+';">Loading the tab…</div></div>';
   var raw = await fetchDinnerRaw(sessionId);
@@ -4164,25 +4216,44 @@ function setupEaterRealtime() {
   removeChannelSafe(eaterChannel);
   var name = eaterCtx.name;
   if (!name) return;
+  var sidAtSetup = sessionId;
+  var nameAtSetup = name;
   eaterSubscribeTs = Date.now();
-  eaterChannel = supabase
-    .channel('eater-' + sessionId + '-' + name)
+  var channelName = 'eater-' + sidAtSetup + '-' + nameAtSetup;
+  var ch = supabase
+    .channel(channelName)
     .on('postgres_changes', {
       event: 'UPDATE', schema: 'public', table: 'orders',
-      filter: 'dinner_id=eq.' + sessionId,
+      filter: 'dinner_id=eq.' + sidAtSetup,
     }, async function(payload) {
-      if (payload && payload.new && payload.new.eater_name === name && payload.new.final_owes != null) {
+      if (payload && payload.new && payload.new.eater_name === nameAtSetup && payload.new.final_owes != null) {
         await removeChannelSafe(eaterChannel); eaterChannel = null;
         if (eaterPollTimer) { clearInterval(eaterPollTimer); eaterPollTimer = null; }
-        var order = await fetchEaterOrder(name);
+        var order = await fetchEaterOrder(nameAtSetup);
         if (order) {
-          orders = await fetchOrdersForDinner(sessionId);
+          orders = await fetchOrdersForDinner(sidAtSetup);
           eaterCtx.order = order;
           setEaterStage('settled');
         }
       }
     })
-    .subscribe();
+    .subscribe(function(status, err) {
+      console.log('[realtime] ' + channelName + ' status:', status, err || '');
+      if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
+        if (!ch._retried) {
+          ch._retried = true;
+          setTimeout(function() {
+            // Only retry if we're still waiting on the same dinner/name.
+            // The visibility-resume listener + 8s poll cover any further drops.
+            if (eaterStage === 'waiting' && eaterCtx.name === nameAtSetup && sessionId === sidAtSetup) {
+              console.log('[realtime] retrying ' + channelName);
+              setupEaterRealtime();
+            }
+          }, 1500);
+        }
+      }
+    });
+  eaterChannel = ch;
   // Always-on poll as a safety net for silent realtime drops (especially
   // common after phone wake / network handoff). 8s cadence — short enough to
   // feel snappy, gentle enough on the orders table.
