@@ -1131,9 +1131,11 @@ async function pickForSavePicks() {
 }
 
 // ── Pre-settle confirmation overlay ─────────────────────────────────────
-// Sanity check before the host fires off totals to everyone. Shows three
-// status rows (items / people / math). All ✓ → primary "Send totals" CTA;
-// any ⚠️ → outlined "Send anyway" so the override is deliberate.
+// Sanity check before the host moves on. Shows three status rows (items /
+// people / math). All ✓ → primary "Show the split" CTA; any ⚠️ → outlined
+// "Show the split anyway" so the override is deliberate. The button does
+// NOT send totals — it routes to the reckoning sheet where the real
+// "Send totals to eaters" lives.
 async function openPreSettleOverlay() {
   // Defensive: refresh participants + orders before we render. Any stale
   // module state from earlier in the session would otherwise show phantom
@@ -1209,9 +1211,11 @@ async function openPreSettleOverlay() {
   var mathExtra = mathOk ? '' :
     '<button onclick="dismissPreSettleOverlay();setHostSheet(\'scan\');" class="tab-ghost-btn" style="margin-top:6px;padding:0;color:'+T.tomato+';font-weight:700;">Fix it →</button>';
 
+  // Honest labels: this button routes to the reckoning sheet (where the
+  // ACTUAL "Send totals to eaters" lives). It doesn't send anything itself.
   var primaryBtn = allOk
-    ? '<button onclick="preSettleProceed()" class="tab-grad-btn" style="width:100%;justify-content:center;padding:14px;">Send totals to eaters →</button>'
-    : '<button onclick="preSettleProceed()" class="tab-outline-btn" style="width:100%;border-color:'+T.tomato+';color:'+T.tomato+';font-weight:700;padding:14px;">Send anyway →</button>';
+    ? '<button onclick="preSettleProceed()" class="tab-grad-btn" style="width:100%;justify-content:center;padding:14px;">Show the split →</button>'
+    : '<button onclick="preSettleProceed()" class="tab-outline-btn" style="width:100%;border-color:'+T.tomato+';color:'+T.tomato+';font-weight:700;padding:14px;">Show the split anyway →</button>';
 
   var inner =
     '<div role="dialog" aria-modal="true" style="background:#fff;border-radius:24px 24px 18px 18px;width:100%;max-width:460px;max-height:90vh;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 -24px 48px -16px rgba(42,22,16,0.45);animation:stageSwap 240ms cubic-bezier(0.2,0.7,0.2,1);">' +
@@ -2658,9 +2662,12 @@ function expandGroupedItem(item) {
       if (n2 > 1 && n2 <= 20) { qty = n2; cleanName = m[2].trim(); }
     }
   }
-  // c) trailing " xN" / " XN" — "Caesar Salad x2"
+  // c) trailing "xN" variants — permissive: optional space before/after x,
+  //    Unicode × (U+00D7), and optional surrounding parens.
+  //    Covers "Coke x2", "Cokex2", "Coke x 2", "Coke(x2)", "Coke ×2",
+  //    "Caesar Salad x2".
   if (qty === 0) {
-    m = rawName.match(/^(.+?)\s+[xX]\s*(\d+)\s*$/);
+    m = rawName.match(/^(.+?)\s*\(?\s*[xX×]\s*(\d{1,2})\s*\)?\s*$/);
     if (m) {
       var n3 = parseInt(m[2], 10);
       if (n3 > 1 && n3 <= 20) { qty = n3; cleanName = m[1].trim(); }
@@ -2672,6 +2679,17 @@ function expandGroupedItem(item) {
     if (m) {
       var n4 = parseInt(m[2], 10);
       if (n4 > 1 && n4 <= 20) { qty = n4; cleanName = m[1].trim(); }
+    }
+  }
+  // e) trailing bare integer — "Coke 2". Gated to bodies that are purely
+  //    letters/spaces/&'.- so "Diet Coke 4.75" (decimal price) and
+  //    "Pizza Margherita 24.50" do NOT trigger. The (\d{1,2}) end-anchor
+  //    means anything with a decimal-style suffix is rejected.
+  if (qty === 0) {
+    m = rawName.match(/^([A-Za-z][A-Za-z\s&'.\-]+)\s+(\d{1,2})\s*$/);
+    if (m) {
+      var n5 = parseInt(m[2], 10);
+      if (n5 > 1 && n5 <= 20) { qty = n5; cleanName = m[1].trim(); }
     }
   }
 
