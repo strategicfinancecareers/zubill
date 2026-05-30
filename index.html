@@ -3715,7 +3715,18 @@ function eaterJoinIfNeeded(name) {
   var n = (name || '').trim();
   if (!n || _eaterJoinedNames[n]) return;
   _eaterJoinedNames[n] = true;
-  supabase.rpc('join_dinner', { p_dinner_id: sessionId, p_name: n }).catch(function() {
+  // Supabase v2 query builder returns a thenable, NOT a real Promise — it
+  // exposes .then() but not .catch(). Use two-arg .then(onOk, onErr) for
+  // fire-and-forget error handling. The previous .catch() blew up with
+  // "supabase.rpc(...).catch is not a function" and hung showEaterView
+  // for every returning eater.
+  supabase.rpc('join_dinner', { p_dinner_id: sessionId, p_name: n }).then(function(res) {
+    if (res && res.error) {
+      console.warn('[eaterJoinIfNeeded] join_dinner error:', res.error);
+      delete _eaterJoinedNames[n];
+    }
+  }, function(err) {
+    console.warn('[eaterJoinIfNeeded] join_dinner threw:', err);
     delete _eaterJoinedNames[n];
   });
 }
