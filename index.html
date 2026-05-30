@@ -1270,6 +1270,40 @@ function dismissPreSettleOverlay() {
   els.forEach(function(el){ el.remove(); });
 }
 
+// ── Visibility resume — self-heal after a phone-sleep mid-flight ────────
+// Fires whenever the tab comes back foreground. Two jobs:
+//   1. Eater on waiting → poll immediately + re-arm realtime if the channel
+//      died while suspended.
+//   2. Host on a dinner → refreshOrders to catch missed realtime events;
+//      additionally, if totals were already sent, retry any eater whose
+//      final_owes is still null (the "host locked phone mid-send" recovery).
+document.addEventListener('visibilitychange', function() {
+  if (document.visibilityState !== 'visible') return;
+  console.log('[VIS] tab visible');
+  // Eater path
+  if (eaterStage === 'waiting' && eaterCtx && eaterCtx.name) {
+    fetchEaterOrder(eaterCtx.name).then(function(order) {
+      if (order && order.finalOwes != null) {
+        console.log('[VIS] eater resume — finalOwes already set, advancing to settled');
+        if (eaterPollTimer) { clearInterval(eaterPollTimer); eaterPollTimer = null; }
+        removeChannelSafe(eaterChannel); eaterChannel = null;
+        eaterCtx.order = order;
+        setEaterStage('settled');
+      } else if (eaterStage === 'waiting') {
+        // Re-arm realtime + poll in case the websocket died during sleep
+        setupEaterRealtime();
+      }
+    }).catch(function(e) { console.warn('[VIS] eater resume check failed:', e); });
+  }
+  // Host path
+  if (mode === 'host' && sessionId && currentDinner) {
+    refreshOrders();
+    if (totalsSent && lastResults && lastResults.length) {
+      retryMissingFinalOwes();
+    }
+  }
+});
+
 // ── Routing ──────────────────────────────────────────────────────────────
 if (mode === 'eater' && sessionId) {
   showEaterView();
@@ -3268,6 +3302,14 @@ async function notifyEaters() {
   if (!lastResults || lastResults.length === 0) { showToast('Calculate the split first'); return; }
   var btn = document.getElementById('notify-btn');
   if (btn) { btn.disabled = true; btn.textContent = 'Sending…'; }
+  // Try to hold the screen on while we send. Without this, a host who taps
+  // Send and immediately locks their phone risks our in-flight Promise.all
+  // being killed mid-batch — leaving some eaters stuck on waiting.
+  var wakeLock = null;
+  if (navigator.wakeLock && navigator.wakeLock.request) {
+    try { wakeLock = await navigator.wakeLock.request('screen'); console.log('[NOTIFY] wake lock acquired'); }
+    catch (e) { console.warn('[NOTIFY] wake lock denied:', e); }
+  }
   var updates = lastResults.filter(function(r) {
     var match = orders.find(function(o){ return o.name === r.name && o.isHost; });
     return !match;
@@ -3281,6 +3323,7 @@ async function notifyEaters() {
     };
   });
   try {
+    console.log('[NOTIFY] sending totals to ' + updates.length + ' eater(s)');
     var results = await Promise.all(updates.map(function(u) {
       return supabase.from('orders').update({
         final_owes: u.final_owes, tax_share: u.tax_share,
@@ -3290,11 +3333,54 @@ async function notifyEaters() {
     var firstError = results.find(function(r){ return r.error; });
     if (firstError) throw firstError.error;
     totalsSent = true;
+    console.log('[NOTIFY] all ' + updates.length + ' sent ok');
     showToast('Totals sent ✨');
     renderHostSettleSheet();
   } catch (e) {
+    console.error('[NOTIFY] failed:', e);
     if (btn) { btn.disabled = false; btn.textContent = 'Send totals to eaters →'; }
-    alert('Error: ' + (e.message || e));
+    alert('Error: ' + (e.message || e) + '\n\nTip: when your phone wakes up, the app will retry any missed eaters automatically.');
+  } finally {
+    if (wakeLock) {
+      try { await wakeLock.release(); console.log('[NOTIFY] wake lock released'); } catch (e) {}
+    }
+  }
+}
+
+// Visibility-resume self-heal: when the host's tab comes back foreground
+// after totals were sent, double-check whether every non-host eater actually
+// has final_owes on the server and silently re-fire the update for any
+// stragglers. Catches the "host locked phone mid-send" failure mode.
+async function retryMissingFinalOwes() {
+  if (!lastResults || !lastResults.length || !sessionId) return;
+  try {
+    var fresh = await fetchOrdersForDinner(sessionId);
+    var freshByName = {};
+    fresh.forEach(function(o){ freshByName[o.name] = o; });
+    var missing = lastResults.filter(function(r) {
+      if (r.isHost) return false;
+      var serverRow = freshByName[r.name];
+      return serverRow && serverRow.finalOwes == null;
+    });
+    if (missing.length === 0) return;
+    console.warn('[NOTIFY RETRY] ' + missing.length + ' eater(s) still missing finalOwes — re-firing');
+    var results = await Promise.all(missing.map(function(r) {
+      return supabase.from('orders').update({
+        final_owes:  round2(r.total),
+        tax_share:   round2(r.tax),
+        tip_share:   round2(r.tip),
+        tip_pct:     r.tipPct || 0,
+      }).eq('dinner_id', sessionId).eq('eater_name', r.name);
+    }));
+    var firstError = results.find(function(r){ return r.error; });
+    if (firstError) {
+      console.error('[NOTIFY RETRY] first error:', firstError.error);
+      showToast('Some totals didn\'t resend — tap "Send totals" again');
+      return;
+    }
+    showToast('Re-sent totals for ' + missing.length + ' eater' + (missing.length === 1 ? '' : 's') + ' ✨');
+  } catch (e) {
+    console.error('[NOTIFY RETRY] threw:', e);
   }
 }
 
@@ -3583,6 +3669,13 @@ function renderEaterStage(animate) {
     updateEaterRunningTotal();
   } else if (eaterStage === 'waiting') {
     setupEaterRealtime();
+    // Fade the stuck-recovery button in after 20s of waiting so the eater
+    // always has a manual escape hatch if realtime + poll both miss.
+    setTimeout(function() {
+      if (eaterStage !== 'waiting') return;
+      var btn = document.getElementById('eater-stuck-btn');
+      if (btn) btn.style.display = 'inline-flex';
+    }, 20000);
   } else if (eaterStage === 'settled') {
     var appEl = document.querySelector('.tab-app');
     if (appEl) fireConfettiOnce(sessionId + '-' + (eaterCtx.name || ''), appEl);
@@ -4057,6 +4150,11 @@ function renderEaterWaitingBody() {
     '</div>' +
     '<button class="tab-outline-btn" style="margin-top:18px;width:auto;padding:12px 22px;display:inline-flex;align-items:center;gap:8px;border-color:'+T.tomato+';color:'+T.tomato+';font-weight:700;" onclick="editEaterOrder()">' +
       '<span style="font-size:14px;">✎</span> Edit my picks' +
+    '</button>' +
+    // Stuck-recovery fallback. Hidden initially; fades in after 20s via the
+    // side-effects block. Surfaces the realtime-died case to the eater.
+    '<button id="eater-stuck-btn" onclick="eaterManualRefresh()" class="tab-ghost-btn" style="display:none;margin-top:10px;padding:6px 10px;font-size:11.5px;font-weight:600;color:'+T.inkDim+';">' +
+      'Stuck? Tap to refresh' +
     '</button>';
   html += '</div>';
   return html;
@@ -4085,15 +4183,15 @@ function setupEaterRealtime() {
       }
     })
     .subscribe();
-  // Belt-and-suspenders: if realtime drops silently, poll every 10s after
-  // the first 5 minutes of waiting. Stops as soon as we advance off waiting.
+  // Always-on poll as a safety net for silent realtime drops (especially
+  // common after phone wake / network handoff). 8s cadence — short enough to
+  // feel snappy, gentle enough on the orders table.
   if (eaterPollTimer) { clearInterval(eaterPollTimer); eaterPollTimer = null; }
   eaterPollTimer = setInterval(function() {
     if (eaterStage !== 'waiting') {
       clearInterval(eaterPollTimer); eaterPollTimer = null;
       return;
     }
-    if (!eaterSubscribeTs || Date.now() - eaterSubscribeTs < 5 * 60 * 1000) return;
     fetchEaterOrder(name).then(function(order) {
       if (order && order.finalOwes != null) {
         clearInterval(eaterPollTimer); eaterPollTimer = null;
@@ -4102,7 +4200,31 @@ function setupEaterRealtime() {
         setEaterStage('settled');
       }
     }).catch(function() {});
-  }, 10000);
+  }, 8000);
+}
+
+// Eater-side manual recovery — surfaced as the "Stuck? Tap to refresh"
+// button that fades in after 20s on the waiting screen.
+async function eaterManualRefresh() {
+  var name = (eaterCtx && eaterCtx.name) || '';
+  if (!name) return;
+  var btn = document.getElementById('eater-stuck-btn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Checking…'; }
+  try {
+    var order = await fetchEaterOrder(name);
+    if (order && order.finalOwes != null) {
+      if (eaterPollTimer) { clearInterval(eaterPollTimer); eaterPollTimer = null; }
+      await removeChannelSafe(eaterChannel); eaterChannel = null;
+      eaterCtx.order = order;
+      setEaterStage('settled');
+      return;
+    }
+    setupEaterRealtime(); // re-arm in case the websocket died
+    if (btn) { btn.disabled = false; btn.textContent = 'Still waiting — try again'; }
+  } catch (e) {
+    console.error('[EATER STUCK] manual refresh failed:', e);
+    if (btn) { btn.disabled = false; btn.textContent = 'Try again'; }
+  }
 }
 
 function renderEaterSettledBody() {
@@ -4292,7 +4414,10 @@ Object.assign(window, {
   submitEaterOrder, toggleEaterClaim, updateEaterRunningTotal, syncEaterName,
   joinTheTable,
   startEaterNameEdit, cancelEaterNameEdit, saveEaterName,
+  eaterManualRefresh,
   addItem, editEaterOrder, payViaZelle, payViaVenmo,
+  // Settle resume safety net
+  retryMissingFinalOwes,
 });
 </script>
 </body>
