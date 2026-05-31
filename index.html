@@ -209,6 +209,22 @@ var eaterFirstRender = true;
 
 // ── Tiny utilities ───────────────────────────────────────────────────────
 function round2(n) { return Math.round(n * 100) / 100; }
+
+// ── Claimed/unclaimed: single source of truth ────────────────────────────
+// Every screen that decides whether a menu item counts as claimed MUST use
+// these so the sanity check, the unclaimed-mismatch fork, and the final split
+// never disagree.
+//   • Non-shared item → claimed when someone is on claimedBy.
+//   • Shared item     → claimed once at least one person has tapped a share
+//                        (sharedBy non-empty). Its full price counts once.
+function isMenuItemClaimed(m) {
+  if (!m) return false;
+  if (m.shared) return Array.isArray(m.sharedBy) && m.sharedBy.length > 0;
+  return !!m.claimedBy;
+}
+function unclaimedMenuItems(items) {
+  return (items || []).filter(function(m) { return !isMenuItemClaimed(m); });
+}
 function escapeHtml(s) {
   return String(s == null ? '' : s).replace(/[&<>"']/g, ch => (
     { '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[ch]
@@ -1159,10 +1175,7 @@ async function openPreSettleOverlay() {
   dismissPreSettleOverlay();
   // Compute status
   var itemsTotal = (menuItems || []).length;
-  var itemsUnclaimed = (menuItems || []).filter(function(m){
-    if (m.shared) return !m.sharedBy || m.sharedBy.length === 0;
-    return !m.claimedBy;
-  });
+  var itemsUnclaimed = unclaimedMenuItems(menuItems);
   var itemsOk = itemsTotal > 0 && itemsUnclaimed.length === 0;
 
   var hostName = (currentDinner && currentDinner.hostName) || '';
@@ -1912,7 +1925,7 @@ function renderHostClaim() {
   var ordersExist = orders.length > 0;
   var confirmed = !!(receiptData && receiptData.confirmed);
   var hostName = d.hostName || '';
-  var claimedCount = (menuItems || []).filter(function(i){ return !!i.claimedBy; }).length;
+  var claimedCount = (menuItems || []).filter(isMenuItemClaimed).length;
   var claimedPct = menuExists ? Math.round((claimedCount/menuItems.length)*100) : 0;
   var feesTotal = (receiptData.fees || []).reduce(function(s,f){ return s+(f.amount||0); }, 0);
   var grandTotal = confirmed
@@ -1949,10 +1962,7 @@ function renderHostClaim() {
     var claimedDollars;
     if (menuExists) {
       claimedDollars = menuItems.reduce(function(s, m) {
-        var claimed = m.shared
-          ? ((m.sharedBy || []).length > 0)
-          : !!m.claimedBy;
-        return claimed ? s + (parseFloat(m.price) || 0) : s;
+        return isMenuItemClaimed(m) ? s + (parseFloat(m.price) || 0) : s;
       }, 0);
     } else {
       claimedDollars = orders.reduce(function(s, o){ return s + (o.subtotal || 0); }, 0);
@@ -3462,8 +3472,7 @@ function calculateFromClaims() {
   // manual mode, the gap between receipt subtotal and sum of order subtotals).
   var unclaimedValue = 0;
   if (menuItems && menuItems.length > 0) {
-    unclaimedValue = menuItems
-      .filter(function(m){ return !m.claimedBy; })
+    unclaimedValue = unclaimedMenuItems(menuItems)
       .reduce(function(s,m){ return s + (parseFloat(m.price)||0); }, 0);
   } else {
     var foodSubtotal = orders.reduce(function(s,o){ return s+(o.subtotal||0); }, 0);
@@ -3491,14 +3500,11 @@ function doCalculate(hostAbsorbsUnclaimed) {
   var grandTotal = foodSubtotal + tax + service + tip + customsSum;
   var hostName = (currentDinner && currentDinner.hostName) || '';
 
-  // Unclaimed value: items with no claimer (shared items with no sharedBy count as unclaimed too)
+  // Unclaimed value: items nobody has claimed (see isMenuItemClaimed —
+  // shared items with no sharers count as unclaimed too).
   var unclaimedValue = 0;
   if (menuItems && menuItems.length > 0) {
-    unclaimedValue = menuItems
-      .filter(function(m) {
-        if (m.shared) return !m.sharedBy || m.sharedBy.length === 0;
-        return !m.claimedBy;
-      })
+    unclaimedValue = unclaimedMenuItems(menuItems)
       .reduce(function(s,m){ return s + (parseFloat(m.price)||0); }, 0);
   } else {
     var ordersFood = orders.reduce(function(s,o){ return s+(o.subtotal||0); }, 0);
