@@ -1941,7 +1941,22 @@ function renderHostClaim() {
 
   var progressSection = '';
   if (menuExists || orders.length > 0) {
-    var claimedDollars = orders.reduce(function(s, o){ return s + (o.subtotal || 0); }, 0);
+    // Claimed total: when we have a menu, count each item's full price exactly
+    // once if it's claimed. Shared items are claimed when ≥1 person shares them;
+    // their full price counts once (not once per sharer), matching how the
+    // per-person fractional shares sum back to the full price. Fall back to
+    // summing order subtotals only when there's no menu (manual-entry path).
+    var claimedDollars;
+    if (menuExists) {
+      claimedDollars = menuItems.reduce(function(s, m) {
+        var claimed = m.shared
+          ? ((m.sharedBy || []).length > 0)
+          : !!m.claimedBy;
+        return claimed ? s + (parseFloat(m.price) || 0) : s;
+      }, 0);
+    } else {
+      claimedDollars = orders.reduce(function(s, o){ return s + (o.subtotal || 0); }, 0);
+    }
     var subtotal = receiptData.subtotal || 0;
     var dollarPct = subtotal > 0 ? Math.min(100, Math.round((claimedDollars / subtotal) * 100)) : 0;
     progressSection =
