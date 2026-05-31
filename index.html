@@ -225,6 +225,49 @@ function isMenuItemClaimed(m) {
 function unclaimedMenuItems(items) {
   return (items || []).filter(function(m) { return !isMenuItemClaimed(m); });
 }
+
+// ── Per-person dollar share of a menu item: single source of truth ───────
+// Used everywhere a shared item contributes to a dollar amount (eater running
+// total, host running tally, doCalculate, eater-final, host-final) so the
+// screens can never drift on how a shared item is split.
+//   • Non-shared item → full price to its single claimer, else 0.
+//   • Shared item     → full price ÷ number of sharers, to each sharer, else 0.
+function getEaterShareOfItem(item, eaterName) {
+  if (!item || !eaterName) return 0;
+  var price = parseFloat(item.price) || 0;
+  if (item.shared) {
+    var sb = item.sharedBy || [];
+    if (sb.indexOf(eaterName) < 0) return 0;
+    return price / Math.max(1, sb.length);
+  }
+  return item.claimedBy === eaterName ? price : 0;
+}
+// Itemized lines a person owes for, each carrying their fractional share plus
+// the metadata needed to render a "shared with N" hint.
+function getEaterItemLines(items, eaterName) {
+  var lines = [];
+  (items || []).forEach(function(m) {
+    var isSharer = m.shared
+      ? ((m.sharedBy || []).indexOf(eaterName) >= 0)
+      : (m.claimedBy === eaterName);
+    if (!isSharer) return;
+    var sharerCount = m.shared ? Math.max(1, (m.sharedBy || []).length) : 1;
+    lines.push({
+      name: m.name,
+      share: getEaterShareOfItem(m, eaterName),
+      fullPrice: parseFloat(m.price) || 0,
+      shared: !!m.shared,
+      sharerCount: sharerCount,
+    });
+  });
+  return lines;
+}
+// Sum of a person's fractional shares across all claimed items.
+function getEaterFoodSubtotal(items, eaterName) {
+  return round2((items || []).reduce(function(s, m) {
+    return s + getEaterShareOfItem(m, eaterName);
+  }, 0));
+}
 function escapeHtml(s) {
   return String(s == null ? '' : s).replace(/[&<>"']/g, ch => (
     { '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[ch]
@@ -2059,8 +2102,14 @@ function runningTallyHTML() {
       '</div>' +
     '</div>';
   }
+  // Derive each person's tally from the canonical menu so shared items count
+  // only their fractional share. Falls back to the stored order for dinners
+  // with no menu (manual entry, where there's no sharing).
+  var hasMenuForTally = (menuItems || []).length > 0;
   var rows = orders.map(function(o) {
-    var nItems = (o.items || []).length;
+    var lines = hasMenuForTally ? getEaterItemLines(menuItems, o.name) : (o.items || []);
+    var nItems = lines.length;
+    var personSubtotal = hasMenuForTally ? getEaterFoodSubtotal(menuItems, o.name) : (o.subtotal || 0);
     return '<div style="display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid '+T.ruleSoft+';">' +
       avatarHTML(o.name, { size: 32 }) +
       '<div style="flex:1;min-width:0;">' +
@@ -2079,7 +2128,7 @@ function runningTallyHTML() {
         '</div>' +
       '</div>' +
       '<div style="text-align:right;flex-shrink:0;">' +
-        moneyHTML(o.subtotal) +
+        moneyHTML(personSubtotal) +
         '<div style="font-size:9.5px;color:'+T.inkDim+';font-weight:700;letter-spacing:0.6px;margin-top:2px;">SO FAR</div>' +
       '</div>' +
     '</div>';
@@ -3517,22 +3566,11 @@ function doCalculate(hostAbsorbsUnclaimed) {
   });
 
   // When menuItems exist, recalculate per-person food directly from item claims
-  // so shared items are split correctly rather than relying on submitted subtotals.
+  // (via the shared getEaterShareOfItem helper) so shared items are split
+  // correctly rather than relying on the full submitted subtotals.
   if (menuItems && menuItems.length > 0) {
-    var foodByName = {};
-    menuItems.forEach(function(m) {
-      var price = parseFloat(m.price) || 0;
-      if (m.shared && m.sharedBy && m.sharedBy.length > 0) {
-        var share = price / m.sharedBy.length;
-        m.sharedBy.forEach(function(n) {
-          foodByName[n] = (foodByName[n] || 0) + share;
-        });
-      } else if (!m.shared && m.claimedBy) {
-        foodByName[m.claimedBy] = (foodByName[m.claimedBy] || 0) + price;
-      }
-    });
     allocs.forEach(function(a) {
-      a.food = round2(foodByName[a.name] || 0);
+      a.food = getEaterFoodSubtotal(menuItems, a.name);
       a.base = a.food;
     });
   }
@@ -4517,7 +4555,11 @@ function renderEaterWaitingBody() {
     var top = order.items.slice().sort(function(a,b){ return (b.price||0) - (a.price||0); })[0];
     if (top) emoji = emojiForItem(top.name);
   }
-  var food = order.subtotal || 0;
+  // Use the eater's fractional share of shared items (canonical menu), not the
+  // full submitted subtotal. Falls back to the stored subtotal for no-menu dinners.
+  var food = (menuItems || []).length > 0
+    ? getEaterFoodSubtotal(menuItems, eaterCtx.name)
+    : (order.subtotal || 0);
   var est = food;
   if (receiptData && receiptData.confirmed && receiptData.subtotal) {
     var prop = food / receiptData.subtotal;
@@ -4662,19 +4704,36 @@ function renderEaterSettledBody() {
       '<div style="margin-top:8px;">' + moneyHTML(order.finalOwes || 0, { big: true, color: T.ink }) + '</div>' +
       '<div style="height:1px;background:'+T.rule+';margin:14px 0;"></div>' +
       '<div style="display:flex;flex-direction:column;gap:7px;">';
-  (order.items || []).forEach(function(it) {
+  // Itemize from the canonical menu (so shared items show the eater's
+  // fractional share, not the full submitted price). Fall back to the stored
+  // order items for manual-entry dinners with no menu.
+  var hasMenuForSettle = (menuItems || []).length > 0;
+  var settleLines = hasMenuForSettle
+    ? getEaterItemLines(menuItems, eaterCtx.name)
+    : (order.items || []).map(function(it) {
+        return { name: it.name, share: parseFloat(it.price) || 0, fullPrice: parseFloat(it.price) || 0, shared: false, sharerCount: 1 };
+      });
+  var settleFood = hasMenuForSettle
+    ? getEaterFoodSubtotal(menuItems, eaterCtx.name)
+    : (order.subtotal || 0);
+  settleLines.forEach(function(it) {
+    var sharedHint = (it.shared && it.sharerCount >= 2)
+      ? '<div style="font-size:10.5px;color:'+T.golden+';font-weight:600;margin-top:1px;">🤝 shared with '+(it.sharerCount-1)+' · $'+it.fullPrice.toFixed(2)+' ÷ '+it.sharerCount+'</div>'
+      : '';
     html += '<div style="display:flex;align-items:center;gap:10px;">' +
       '<span style="font-size:18px;">'+emojiForItem(it.name)+'</span>' +
-      '<div style="flex:1;font-size:13px;font-weight:500;color:'+T.ink+';overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' +
-        escapeHtml(it.name) + '</div>' +
-      '<div style="font-size:13px;font-weight:600;color:'+T.ink+';">$'+parseFloat(it.price).toFixed(2)+'</div>' +
+      '<div style="flex:1;min-width:0;font-size:13px;font-weight:500;color:'+T.ink+';">' +
+        '<div style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">'+escapeHtml(it.name)+'</div>' +
+        sharedHint +
+      '</div>' +
+      '<div style="font-size:13px;font-weight:600;color:'+T.ink+';">$'+(it.share).toFixed(2)+'</div>' +
     '</div>';
   });
   html +=
       '</div>' +
       '<div style="height:1px;background:'+T.rule+';margin:14px 0 10px;"></div>' +
       '<div style="display:flex;flex-direction:column;gap:4px;font-size:12px;color:'+T.inkSoft+';font-weight:500;">' +
-        '<div style="display:flex;justify-content:space-between;"><span>Food</span><span style="font-weight:600;color:'+T.ink+';">$'+(order.subtotal||0).toFixed(2)+'</span></div>' +
+        '<div style="display:flex;justify-content:space-between;"><span>Food</span><span style="font-weight:600;color:'+T.ink+';">$'+settleFood.toFixed(2)+'</span></div>' +
         '<div style="display:flex;justify-content:space-between;"><span>Tax · your share</span><span style="font-weight:600;color:'+T.ink+';">$'+(order.taxShare||0).toFixed(2)+'</span></div>' +
         '<div style="display:flex;justify-content:space-between;"><span>Tip · '+(order.tipPct||0)+'%</span><span style="font-weight:600;color:'+T.ink+';">$'+(order.tipShare||0).toFixed(2)+'</span></div>' +
       '</div>' +
