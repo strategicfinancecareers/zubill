@@ -1022,7 +1022,8 @@ function pickForItemsSheetHTML() {
     menuItems.forEach(function(item, idx) {
       var claimer = item.claimedBy;
       var isSelected = selected.indexOf(idx) >= 0;
-      var isOtherClaim = claimer && claimer !== name;
+      // Shared items are always available to pick; only skip non-shared items claimed by someone else
+      var isOtherClaim = !item.shared && claimer && claimer !== name;
       if (isOtherClaim) return; // skip items claimed by someone else
       var rowClass = 'tab-item-row' + (isSelected ? ' is-mine' : '');
       html +=
@@ -1062,7 +1063,9 @@ function pickForChooseExisting(name) {
   pickForCtx.stage = 'items';
   pickForCtx.selectedIndices = [];
   (menuItems || []).forEach(function(m, i) {
-    if (m && m.claimedBy === name) pickForCtx.selectedIndices.push(i);
+    if (!m) return;
+    if (m.shared ? (m.sharedBy || []).indexOf(name) >= 0 : m.claimedBy === name)
+      pickForCtx.selectedIndices.push(i);
   });
   renderPickForModal();
 }
@@ -1156,7 +1159,10 @@ async function openPreSettleOverlay() {
   dismissPreSettleOverlay();
   // Compute status
   var itemsTotal = (menuItems || []).length;
-  var itemsUnclaimed = (menuItems || []).filter(function(m){ return !m.claimedBy; });
+  var itemsUnclaimed = (menuItems || []).filter(function(m){
+    if (m.shared) return !m.sharedBy || m.sharedBy.length === 0;
+    return !m.claimedBy;
+  });
   var itemsOk = itemsTotal > 0 && itemsUnclaimed.length === 0;
 
   var hostName = (currentDinner && currentDinner.hostName) || '';
@@ -2487,6 +2493,7 @@ function foodZoneHTML(sub) {
     html += '<div style="margin-top:14px;padding-top:12px;border-top:1.5px solid '+T.rule+';">' +
       '<div id="menu-items-list">';
     (menuItems || []).forEach(function(item, idx) {
+      var isSharedItem = !!item.shared;
       html +=
         '<div class="menu-item-row" id="mrow-'+idx+'" style="display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid '+T.ruleSoft+';">' +
           '<span style="font-size:22px;flex-shrink:0;width:28px;text-align:center;">'+emojiForItem(item.name)+'</span>' +
@@ -2499,6 +2506,7 @@ function foodZoneHTML(sub) {
             '<input type="number" class="menu-item-price tab-tnum" data-idx="'+idx+'" value="'+(parseFloat(item.price)||0).toFixed(2)+'" step="0.01" min="0" oninput="updateMenuItemPrice(this)" ' +
               'style="width:62px;font-size:14.5px;font-weight:700;color:'+T.tomato+';border:none;background:transparent;text-align:right;outline:none;padding:0;" />' +
           '</div>' +
+          '<button onclick="toggleSharedItem('+idx+')" title="'+(isSharedItem?'Remove shared':'Mark as shared by group')+'" style="background:none;border:1.5px solid '+(isSharedItem?T.golden:T.ruleSoft)+';border-radius:20px;font-size:11px;font-weight:600;color:'+(isSharedItem?T.golden:T.inkDim)+';cursor:pointer;padding:2px 6px;flex-shrink:0;white-space:nowrap;line-height:1.4;-webkit-tap-highlight-color:transparent;">🤝</button>' +
           '<button onclick="removeMenuItemByIdx('+idx+')" style="background:none;border:none;color:'+T.inkDim+';font-size:18px;cursor:pointer;padding:0 2px;flex-shrink:0;">×</button>' +
         '</div>';
     });
@@ -2994,6 +3002,24 @@ function removeMenuItemByIdx(idx) {
   saveScanStateDebounced();
   renderHostScanSheet();
 }
+function toggleSharedItem(idx) {
+  if (!menuItems[idx]) return;
+  var wasShared = !!menuItems[idx].shared;
+  menuItems[idx] = Object.assign({}, menuItems[idx], {
+    shared: !wasShared,
+    sharedBy: wasShared ? [] : (menuItems[idx].sharedBy || []),
+  });
+  saveScanStateDebounced();
+  // Patch only the food zone so inputs don't lose focus
+  var foodZone = document.getElementById('food-zone');
+  if (foodZone) {
+    var sub = (menuItems || []).reduce(function(s, m) { return s + (parseFloat(m.price) || 0); }, 0);
+    var tmp = document.createElement('div');
+    tmp.innerHTML = foodZoneHTML(sub);
+    var newFZ = tmp.querySelector('#food-zone');
+    if (newFZ) foodZone.parentNode.replaceChild(newFZ, foodZone);
+  }
+}
 // Legacy stubs (kept so any saved-state references don't blow up)
 function setTipMode(included) { receiptData.tipIncluded = !!included; }
 function setReceiptTip(pct)   { receiptData.tipPct = pct; }
@@ -3410,11 +3436,14 @@ function doCalculate(hostAbsorbsUnclaimed) {
   var grandTotal = foodSubtotal + tax + service + tip + customsSum;
   var hostName = (currentDinner && currentDinner.hostName) || '';
 
-  // Unclaimed value:
+  // Unclaimed value: items with no claimer (shared items with no sharedBy count as unclaimed too)
   var unclaimedValue = 0;
   if (menuItems && menuItems.length > 0) {
     unclaimedValue = menuItems
-      .filter(function(m){ return !m.claimedBy; })
+      .filter(function(m) {
+        if (m.shared) return !m.sharedBy || m.sharedBy.length === 0;
+        return !m.claimedBy;
+      })
       .reduce(function(s,m){ return s + (parseFloat(m.price)||0); }, 0);
   } else {
     var ordersFood = orders.reduce(function(s,o){ return s+(o.subtotal||0); }, 0);
@@ -3425,6 +3454,27 @@ function doCalculate(hostAbsorbsUnclaimed) {
   var allocs = orders.map(function(o) {
     return { name: o.name, isHost: !!o.isHost, base: o.subtotal || 0, food: o.subtotal || 0 };
   });
+
+  // When menuItems exist, recalculate per-person food directly from item claims
+  // so shared items are split correctly rather than relying on submitted subtotals.
+  if (menuItems && menuItems.length > 0) {
+    var foodByName = {};
+    menuItems.forEach(function(m) {
+      var price = parseFloat(m.price) || 0;
+      if (m.shared && m.sharedBy && m.sharedBy.length > 0) {
+        var share = price / m.sharedBy.length;
+        m.sharedBy.forEach(function(n) {
+          foodByName[n] = (foodByName[n] || 0) + share;
+        });
+      } else if (!m.shared && m.claimedBy) {
+        foodByName[m.claimedBy] = (foodByName[m.claimedBy] || 0) + price;
+      }
+    });
+    allocs.forEach(function(a) {
+      a.food = round2(foodByName[a.name] || 0);
+      a.base = a.food;
+    });
+  }
   if (unclaimedValue > 0.005) {
     if (hostAbsorbsUnclaimed) {
       var h = allocs.find(function(a){ return a.isHost; });
@@ -4146,14 +4196,32 @@ function renderEaterClaimingBody() {
   if (hasMenu) {
     html += '<div style="display:flex;flex-direction:column;gap:8px;">';
     menuItems.forEach(function(item, idx) {
-      var claimer = item.claimedBy;
-      var alreadyMine = !!(meName && claimer === meName);
+      var isShared   = !!item.shared;
+      var sharedBy   = isShared ? (item.sharedBy || []) : [];
+      var claimer    = item.claimedBy;
+      var alreadyMine = !!(meName && (isShared ? sharedBy.indexOf(meName) >= 0 : claimer === meName));
       var inSelection = (eaterCtx.selectedIndices || []).indexOf(idx) >= 0;
       var isMine = inSelection || alreadyMine;
       if (alreadyMine && !inSelection) eaterCtx.selectedIndices.push(idx);
-      var isOther = !!(claimer && claimer !== meName && !isMine);
+      // Shared items are always tappable; non-shared items locked once someone else has them
+      var isOther = !isShared && !!(claimer && claimer !== meName && !isMine);
       var tapAttr = isOther ? '' : ' onclick="toggleEaterClaim(this)"';
       var rowClass = 'tab-item-row' + (isMine ? ' is-mine' : '') + (isOther ? ' is-locked' : '');
+
+      // Build the sharing label and per-person price for shared items
+      var sharingLabel = '';
+      var displayPrice = item.price;
+      if (isShared) {
+        var count = sharedBy.length;
+        if (count >= 2) {
+          var perPerson = round2(item.price / count);
+          sharingLabel = '🤝 ' + count + ' sharing · $' + perPerson.toFixed(2) + ' each';
+          displayPrice = perPerson;
+        } else {
+          sharingLabel = '🤝 shared';
+        }
+      }
+
       html +=
         '<div class="'+rowClass+'" data-idx="'+idx+'" data-name="'+attr(item.name)+'" data-price="'+item.price+'"'+tapAttr+'>' +
           '<div class="tab-emoji-chip">'+emojiForItem(item.name)+'</div>' +
@@ -4167,9 +4235,11 @@ function renderEaterClaimingBody() {
                   avatarStackHTML([claimer], { size: 18 }) +
                   '<span style="font-size:11px;color:'+T.inkDim+';font-weight:500;">claimed by '+escapeHtml(claimer)+'</span>' +
                 '</div>'
-              : '') +
+              : (sharingLabel
+                  ? '<div style="margin-top:4px;"><span style="font-size:10.5px;font-weight:600;color:'+T.golden+';background:rgba(242,184,84,0.12);border:1px solid rgba(242,184,84,0.3);border-radius:10px;padding:1px 7px;">'+escapeHtml(sharingLabel)+'</span></div>'
+                  : '')) +
           '</div>' +
-          '<div style="text-align:right;">' + moneyHTML(item.price) +
+          '<div style="text-align:right;">' + moneyHTML(displayPrice) +
             (isMine ? '<div class="eater-you-pill" style="font-size:10px;font-weight:700;color:'+T.tomato+';margin-top:2px;letter-spacing:0.4px;">YOU</div>' : '') +
           '</div>' +
         '</div>';
@@ -4241,9 +4311,19 @@ function computeEaterRunningTotal() {
   var hasMenu = (menuItems || []).length > 0;
   var sum = 0;
   if (hasMenu) {
+    var myName = eaterCtx.name || eaterCtx.prefillName || '';
     (eaterCtx.selectedIndices || []).forEach(function(i) {
       var m = menuItems[i];
-      if (m) sum += parseFloat(m.price) || 0;
+      if (!m) return;
+      if (m.shared) {
+        // Estimate my share: price divided by (current claimants + me if not already counted)
+        var sb = m.sharedBy || [];
+        var alreadyCounted = myName && sb.indexOf(myName) >= 0;
+        var count = sb.length + (alreadyCounted ? 0 : 1);
+        sum += (parseFloat(m.price) || 0) / Math.max(1, count);
+      } else {
+        sum += parseFloat(m.price) || 0;
+      }
     });
   } else {
     document.querySelectorAll('#items-list .item-row').forEach(function(r) {
