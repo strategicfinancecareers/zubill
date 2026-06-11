@@ -1901,12 +1901,29 @@ function listenOrders() {
 
 async function refreshOrders() {
   try {
-    var both = await Promise.all([
+    // Also refetch the dinner row so menuItems (claimedBy/sharedBy) is fresh on
+    // EVERY realtime event. The running tally and "X of Y claimed" now derive
+    // from menuItems, so an eater's claim must update it here — we can't rely on
+    // the separate dinners-UPDATE event (it's skipped on the scan sheet and
+    // inside the autosave echo window). Skip the menu refetch only while the
+    // host is editing the scan sheet, so we never clobber in-progress edits.
+    var refetchMenu = (hostSheet !== 'scan');
+    var results = await Promise.all([
       fetchOrdersForDinner(sessionId),
       fetchParticipants(sessionId),
+      refetchMenu ? fetchDinnerRaw(sessionId) : Promise.resolve(null),
     ]);
-    orders = both[0] || [];
-    participants = both[1] || [];
+    orders = results[0] || [];
+    participants = results[1] || [];
+    if (results[2]) {
+      var nd = normalizeDinner(results[2]);
+      menuItems = nd.menuItems || [];
+      receiptData = nd.receiptData;
+      if (currentDinner) {
+        currentDinner.menuItems = menuItems;
+        currentDinner.receiptData = receiptData;
+      }
+    }
   } catch (e) {
     console.warn('refreshOrders rejected:', e);
     orders = orders || [];
@@ -4529,14 +4546,32 @@ async function submitEaterOrder() {
       localStorage.setItem('last-eater-session', sessionId);
     } catch (e) { console.warn('[EATER SUBMIT] localStorage write failed:', e); }
 
-    // 6) Stage transition — DON'T wait on social-proof refetch. We have the
+    // 6) Optimistically reflect this eater's claims in the local menu, mirroring
+    //    what claim_menu_items did server-side. The waiting screen's running
+    //    total derives from getEaterShareOfItem(menuItems, name), so without this
+    //    it would read $0.00 until a realtime/refetch round-trip lands.
+    if (hasMenu) {
+      indices.forEach(function(i) {
+        var m = menuItems[i];
+        if (!m) return;
+        if (m.shared) {
+          var sb = (m.sharedBy || []).slice();
+          if (sb.indexOf(name) < 0) sb.push(name);
+          menuItems[i] = Object.assign({}, m, { sharedBy: sb });
+        } else {
+          menuItems[i] = Object.assign({}, m, { claimedBy: name });
+        }
+      });
+    }
+
+    // 7) Stage transition — DON'T wait on social-proof refetch. We have the
     //    items + subtotal in memory; render waiting immediately.
     eaterCtx.name = name;
     eaterCtx.order = { items: items, subtotal: subtotal };
     console.log('[EATER SUBMIT] transitioning to waiting');
     setEaterStage('waiting');
 
-    // 7) Background refresh for the settled-stage social proof later.
+    // 8) Background refresh for the settled-stage social proof later.
     fetchOrdersForDinner(sessionId)
       .then(function(o) { orders = o; })
       .catch(function(e) { console.warn('[EATER SUBMIT] post-submit orders refresh failed:', e); });
