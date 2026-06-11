@@ -268,6 +268,61 @@ function getEaterFoodSubtotal(items, eaterName) {
     return s + getEaterShareOfItem(m, eaterName);
   }, 0));
 }
+
+// ── Reconcile authoritative claims from `orders` into menuItems ──────────
+// menu_items[].claimedBy/sharedBy is a lossy, frequently-stale record of who
+// claimed what: a non-shared line can only hold ONE claimedBy, the host
+// re-claiming overwrites an eater, and an eater's claim_menu_items write can be
+// pre-empted entirely. The `orders` table — which drives the live activity
+// banner — is the real source of truth: every claimant (eater AND host) has an
+// order row listing the items they took. This layers those orders onto a COPY
+// of menuItems so the host's cards, running tally, progress, and final split
+// all read the same fresh data as the banner. Index order is preserved, so card
+// onclick indices still map 1:1 to the global menuItems.
+function reconcileMenuClaims(menuItems, orders) {
+  if (!menuItems || !menuItems.length) return menuItems || [];
+  var items = menuItems.map(function(m) {
+    var c = Object.assign({}, m);
+    if (m.shared) c.sharedBy = Array.isArray(m.sharedBy) ? m.sharedBy.slice() : [];
+    return c;
+  });
+  function norm(s) { return String(s == null ? '' : s).trim().toLowerCase(); }
+  var idxByName = {};
+  items.forEach(function(m, i) {
+    var k = norm(m.name);
+    (idxByName[k] = idxByName[k] || []).push(i);
+  });
+  (orders || []).forEach(function(o) {
+    if (!o || !o.name) return;
+    // How many of each item name this person submitted in their order.
+    var want = {};
+    (o.items || []).forEach(function(oi) { var k = norm(oi.name); want[k] = (want[k] || 0) + 1; });
+    Object.keys(want).forEach(function(k) {
+      var idxs = idxByName[k];
+      if (!idxs || !idxs.length) return;
+      // Shared line for this name → add the person to its sharer list (once).
+      var sharedIdx = null;
+      for (var s = 0; s < idxs.length; s++) { if (items[idxs[s]].shared) { sharedIdx = idxs[s]; break; } }
+      if (sharedIdx != null) {
+        var sb = items[sharedIdx].sharedBy;
+        if (sb.indexOf(o.name) < 0) sb.push(o.name);
+        return;
+      }
+      // Non-shared: assign (submitted − already-credited) occurrences to free
+      // duplicate lines. Never overwrite an existing owner; first claimant wins
+      // a contested single line.
+      var already = idxs.filter(function(i) { return items[i].claimedBy === o.name; }).length;
+      var need = want[k] - already;
+      for (var n = 0; n < need; n++) {
+        var free = -1;
+        for (var j = 0; j < idxs.length; j++) { if (!items[idxs[j]].claimedBy) { free = idxs[j]; break; } }
+        if (free < 0) break;
+        items[free].claimedBy = o.name;
+      }
+    });
+  });
+  return items;
+}
 function escapeHtml(s) {
   return String(s == null ? '' : s).replace(/[&<>"']/g, ch => (
     { '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[ch]
@@ -1216,9 +1271,10 @@ async function openPreSettleOverlay() {
     console.warn('[PRE-SETTLE] state refresh failed:', e);
   }
   dismissPreSettleOverlay();
-  // Compute status
+  // Compute status — reconcile orders into the menu so an eater's claims that
+  // never reached menu_items count as claimed (matching the cards + split).
   var itemsTotal = (menuItems || []).length;
-  var itemsUnclaimed = unclaimedMenuItems(menuItems);
+  var itemsUnclaimed = unclaimedMenuItems(reconcileMenuClaims(menuItems, orders));
   var itemsOk = itemsTotal > 0 && itemsUnclaimed.length === 0;
 
   var hostName = (currentDinner && currentDinner.hostName) || '';
@@ -1985,8 +2041,12 @@ function renderHostClaim() {
   var ordersExist = orders.length > 0;
   var confirmed = !!(receiptData && receiptData.confirmed);
   var hostName = d.hostName || '';
-  var claimedCount = (menuItems || []).filter(isMenuItemClaimed).length;
-  var claimedPct = menuExists ? Math.round((claimedCount/menuItems.length)*100) : 0;
+  // Merge the authoritative per-eater claims (from `orders`) into the menu so
+  // cards/tally/progress reflect what eaters actually submitted — the same
+  // source the activity banner uses. menu_items[].claimedBy alone is stale/lossy.
+  var claimItems = reconcileMenuClaims(menuItems, orders);
+  var claimedCount = claimItems.filter(isMenuItemClaimed).length;
+  var claimedPct = menuExists ? Math.round((claimedCount/claimItems.length)*100) : 0;
   var feesTotal = (receiptData.fees || []).reduce(function(s,f){ return s+(f.amount||0); }, 0);
   var grandTotal = confirmed
     ? ((receiptData.subtotal||0) + (receiptData.tax||0) + (receiptData.tip||0) + feesTotal)
@@ -2021,7 +2081,7 @@ function renderHostClaim() {
     // summing order subtotals only when there's no menu (manual-entry path).
     var claimedDollars;
     if (menuExists) {
-      claimedDollars = menuItems.reduce(function(s, m) {
+      claimedDollars = claimItems.reduce(function(s, m) {
         return isMenuItemClaimed(m) ? s + (parseFloat(m.price) || 0) : s;
       }, 0);
     } else {
@@ -2044,7 +2104,7 @@ function renderHostClaim() {
   var bodyHTML = '';
   if (menuExists) {
     bodyHTML += '<div style="padding:0 16px 200px;display:flex;flex-direction:column;gap:8px;">';
-    var slots = groupMenuItemsByGroupId(menuItems);
+    var slots = groupMenuItemsByGroupId(claimItems);
     slots.forEach(function(slot) {
       if (slot.isGroup) {
         bodyHTML += renderHostGroupCard(slot, hostName);
@@ -2103,13 +2163,13 @@ function renderHostClaim() {
   document.getElementById('app').innerHTML =
     '<div class="tab-app tab-fade-in">' +
       progressBarHTML('settle') + headerHTML + tickerSection + pickForCtaHTML() +
-      progressSection + hostClaimReminderHTML() + bodyHTML + runningTallyHTML() + stickyHTML +
+      progressSection + hostClaimReminderHTML() + bodyHTML + runningTallyHTML(claimItems) + stickyHTML +
     '</div>';
 
   startTicker();
 }
 
-function runningTallyHTML() {
+function runningTallyHTML(claimItems) {
   if (orders.length === 0) {
     // Reserve space so the first order doesn't shove the sticky bar down a frame
     return '<div style="padding:14px 16px 0;">' +
@@ -2119,14 +2179,20 @@ function runningTallyHTML() {
       '</div>' +
     '</div>';
   }
-  // Derive each person's tally from the canonical menu so shared items count
-  // only their fractional share. Falls back to the stored order for dinners
-  // with no menu (manual entry, where there's no sharing).
-  var hasMenuForTally = (menuItems || []).length > 0;
+  // Derive each person's tally from the reconciled menu (orders merged in) so
+  // shared items count only their fractional share AND eaters whose claims
+  // never reached menu_items still show up. Falls back to the stored order for
+  // dinners with no menu (manual entry, where there's no sharing).
+  var tallyItems = (claimItems && claimItems.length) ? claimItems : menuItems;
+  var hasMenuForTally = (tallyItems || []).length > 0;
   var rows = orders.map(function(o) {
-    var lines = hasMenuForTally ? getEaterItemLines(menuItems, o.name) : (o.items || []);
+    var lines = hasMenuForTally ? getEaterItemLines(tallyItems, o.name) : (o.items || []);
     var nItems = lines.length;
-    var personSubtotal = hasMenuForTally ? getEaterFoodSubtotal(menuItems, o.name) : (o.subtotal || 0);
+    var personSubtotal = hasMenuForTally ? getEaterFoodSubtotal(tallyItems, o.name) : (o.subtotal || 0);
+    // A shared item the eater is currently the SOLE claimant of bills at full
+    // price for now and will drop as others join — flag it so the host knows
+    // the figure is provisional (the dollar amount still shows, never $0).
+    var pendingShares = hasMenuForTally && lines.some(function(l) { return l.shared && l.sharerCount === 1; });
     return '<div style="display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid '+T.ruleSoft+';">' +
       avatarHTML(o.name, { size: 32 }) +
       '<div style="flex:1;min-width:0;">' +
@@ -2142,6 +2208,7 @@ function runningTallyHTML() {
         '</div>' +
         '<div style="font-size:11.5px;color:'+T.inkDim+';font-weight:500;margin-top:2px;">' +
           nItems + ' ' + (nItems === 1 ? 'item' : 'items') +
+          (pendingShares ? ' · <span style="color:'+T.golden+';font-weight:600;">⏳ pending shares</span>' : '') +
         '</div>' +
       '</div>' +
       '<div style="text-align:right;flex-shrink:0;">' +
@@ -3536,9 +3603,12 @@ function calculateFromClaims() {
   if (orders.length === 0) { showToast('No orders yet'); return; }
   // Detect unclaimed food (real menu items without a claimedBy, or, in
   // manual mode, the gap between receipt subtotal and sum of order subtotals).
+  // Reconcile orders into the menu first so an eater's claims that never reached
+  // menu_items aren't mis-counted as unclaimed.
+  var claimItems = reconcileMenuClaims(menuItems, orders);
   var unclaimedValue = 0;
   if (menuItems && menuItems.length > 0) {
-    unclaimedValue = unclaimedMenuItems(menuItems)
+    unclaimedValue = unclaimedMenuItems(claimItems)
       .reduce(function(s,m){ return s + (parseFloat(m.price)||0); }, 0);
   } else {
     var foodSubtotal = orders.reduce(function(s,o){ return s+(o.subtotal||0); }, 0);
@@ -3566,11 +3636,16 @@ function doCalculate(hostAbsorbsUnclaimed) {
   var grandTotal = foodSubtotal + tax + service + tip + customsSum;
   var hostName = (currentDinner && currentDinner.hostName) || '';
 
+  // Reconcile the authoritative per-eater claims (from `orders`) into the menu
+  // so the split matches what the host's cards show — an eater's claim that
+  // never reached menu_items must still credit them, not read as unclaimed.
+  var claimItems = reconcileMenuClaims(menuItems, orders);
+
   // Unclaimed value: items nobody has claimed (see isMenuItemClaimed —
   // shared items with no sharers count as unclaimed too).
   var unclaimedValue = 0;
   if (menuItems && menuItems.length > 0) {
-    unclaimedValue = unclaimedMenuItems(menuItems)
+    unclaimedValue = unclaimedMenuItems(claimItems)
       .reduce(function(s,m){ return s + (parseFloat(m.price)||0); }, 0);
   } else {
     var ordersFood = orders.reduce(function(s,o){ return s+(o.subtotal||0); }, 0);
@@ -3587,7 +3662,7 @@ function doCalculate(hostAbsorbsUnclaimed) {
   // correctly rather than relying on the full submitted subtotals.
   if (menuItems && menuItems.length > 0) {
     allocs.forEach(function(a) {
-      a.food = getEaterFoodSubtotal(menuItems, a.name);
+      a.food = getEaterFoodSubtotal(claimItems, a.name);
       a.base = a.food;
     });
   }
