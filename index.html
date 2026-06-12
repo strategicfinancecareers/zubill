@@ -3,8 +3,18 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1, viewport-fit=cover">
-<meta name="theme-color" content="#FFF4E8">
+<meta name="theme-color" content="#E54B3C">
 <title>Zubill — Open a tab</title>
+
+<!-- PWA: installable to the home screen, standalone app-like experience -->
+<link rel="manifest" href="/manifest.json">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="Zubill">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<link rel="icon" type="image/png" sizes="192x192" href="/icon-192.png">
+<link rel="icon" href="/favicon.ico" sizes="any">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <!-- Outfit (body) — swap, with a preconnect above to cut the FOUT short -->
@@ -5038,6 +5048,15 @@ Object.assign(window, {
   // Settle resume safety net
   retryMissingFinalOwes,
 });
+</script>
+<!-- PWA: register the service worker for offline support (pure enhancement;
+     failure is swallowed so the app is unaffected in browsers without SW). -->
+<script>
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', function () {
+      navigator.serviceWorker.register('/sw.js').catch(console.warn);
+    });
+  }
 </script>
 </body>
 </html>
