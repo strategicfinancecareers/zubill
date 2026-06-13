@@ -1,2 +1,2 @@
-# zubill
+# Meza
 Restaurant bill splitter

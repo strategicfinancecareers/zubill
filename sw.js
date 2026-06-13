@@ -1,15 +1,15 @@
-// Zubill service worker — offline app shell + cache-first static assets.
+// Meza service worker — offline app shell + cache-first static assets.
 // Live data (Supabase REST/Realtime, ESM CDN) ALWAYS goes to the network so the
 // bill-splitting state is never stale. Bump CACHE to invalidate old caches.
-const CACHE = 'zubill-v1';
+const CACHE = 'meza-v2';
 const PRECACHE = [
   '/',
   '/index.html',
   '/manifest.json',
-  '/icon-192.png',
-  '/icon-512.png',
-  '/apple-touch-icon.png',
-  '/favicon.ico',
+  '/icons/icon-192.png',
+  '/icons/icon-512.png',
+  '/icons/apple-touch-icon.png',
+  '/icons/favicon.ico',
 ];
 
 self.addEventListener('install', (event) => {
