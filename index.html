@@ -225,6 +225,28 @@ var eaterFirstRender = true;
 // ── Tiny utilities ───────────────────────────────────────────────────────
 function round2(n) { return Math.round(n * 100) / 100; }
 
+// Preserve scroll position across a full innerHTML re-render so the current
+// user's own taps (claim/unclaim/expand) don't flicker the page back to the top.
+// Symptom-only patch: it does not change any render or claim logic.
+function preserveScroll(renderFn) {
+  // Capture scroll position from both window and any common scroll containers
+  const scrollY = window.scrollY || window.pageYOffset || 0;
+  const scroller = document.scrollingElement || document.documentElement;
+  const scrollTop = scroller ? scroller.scrollTop : 0;
+
+  renderFn();
+
+  // Restore on the next two animation frames — once after layout, once for safety
+  requestAnimationFrame(() => {
+    window.scrollTo({ top: scrollY, behavior: 'auto' });
+    if (scroller) scroller.scrollTop = scrollTop;
+    requestAnimationFrame(() => {
+      window.scrollTo({ top: scrollY, behavior: 'auto' });
+      if (scroller) scroller.scrollTop = scrollTop;
+    });
+  });
+}
+
 // ── Claimed/unclaimed: single source of truth ────────────────────────────
 // Every screen that decides whether a menu item counts as claimed MUST use
 // these so the sanity check, the unclaimed-mismatch fork, and the final split
@@ -1221,7 +1243,7 @@ function togglePickForClaim(idx) {
   var pos = pickForCtx.selectedIndices.indexOf(idx);
   if (pos >= 0) pickForCtx.selectedIndices.splice(pos, 1);
   else pickForCtx.selectedIndices.push(idx);
-  renderPickForModal();
+  preserveScroll(() => renderPickForModal());
 }
 
 async function pickForSavePicks() {
@@ -2386,7 +2408,7 @@ async function toggleHostItemClaim(idx) {
     var nextClaim = item.claimedBy === hostName ? null : hostName;
     menuItems[idx] = Object.assign({}, item, { claimedBy: nextClaim });
   }
-  renderHostClaim();
+  preserveScroll(() => renderHostClaim());
   // Recompute host's full claim list across both shared and non-shared items.
   // Shared items contribute the host's even split (price ÷ number of sharers).
   var indices = [];
@@ -3089,7 +3111,7 @@ function groupMenuItemsByGroupId(items) {
 
 function toggleHostGroup(gid) {
   expandedGroups[gid] = !expandedGroups[gid];
-  renderHostClaim();
+  preserveScroll(() => renderHostClaim());
 }
 
 function scanReceipt() {
