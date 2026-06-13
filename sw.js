@@ -1,7 +1,7 @@
 // Meza service worker — offline app shell + cache-first static assets.
 // Live data (Supabase REST/Realtime, ESM CDN) ALWAYS goes to the network so the
 // bill-splitting state is never stale. Bump CACHE to invalidate old caches.
-const CACHE = 'meza-v2';
+const CACHE = 'meza-v3';
 const PRECACHE = [
   '/',
   '/index.html',
